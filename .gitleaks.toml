@@ -1,0 +1,42 @@
+title = "omri-agent-util-belt leak scan"
+
+# inherit all default gitleaks rules (API keys, tokens, private keys, etc.)
+[extend]
+useDefault = true
+
+# ---- custom Wix-internal rules ----
+
+[[rules]]
+id = "wix-corp-email"
+description = "Wix corporate email address"
+regex = '''[a-zA-Z0-9._%+-]+@wix\.com'''
+tags = ["wix", "internal"]
+
+[[rules]]
+id = "wix-internal-domains"
+description = "Wix internal infra hosts (grafana/kibana/jenkins/argus/atrium/astra .wix.*)"
+regex = '''(?i)\b(grafana|kibana|jenkins|argus|atrium|astra|wixpress|github\.wixpress)\.(wix|wixpress)\.(net|com|local|internal|io)\b'''
+tags = ["wix", "internal"]
+
+[[rules]]
+id = "wix-internal-keywords"
+description = "Wix-internal tool/process identifiers"
+regex = '''(?i)\b(wix-internal|astra-pr-review|#astra-pr|atrium-app|wixpress\.com)\b'''
+tags = ["wix", "internal"]
+
+[[rules]]
+id = "wix-internal-slo-paths"
+description = "Wix internal SLO / runbook paths"
+regex = '''(?i)\b(slo\.wix|runbook\.wix|wiki\.wixpress)\b'''
+tags = ["wix", "internal"]
+
+# Public Wix product mentions ("Wix Form", "Wix Studio") are NOT blocked.
+# Meta-files that legitimately contain the patterns as rule definitions are allowlisted.
+[allowlist]
+description = "false-positive overrides"
+paths = [
+  '''\.gitleaks\.toml''',
+  '''\.githooks/.*''',
+  '''\.github/workflows/leak-scan\.yml''',
+]
+regexes = []

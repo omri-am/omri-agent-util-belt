@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Local leak-scan gate. Activate once per clone:
+#   git config core.hooksPath .githooks
+# Bypass (NOT recommended): git commit --no-verify
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="$REPO_ROOT/.gitleaks.toml"
+
+if command -v gitleaks >/dev/null 2>&1; then
+  # Authoritative path: gitleaks scans staged diff using full ruleset.
+  gitleaks protect --staged --redact --config "$CONFIG" --no-banner
+  exit $?
+fi
+
+# Fallback: grep on a small built-in pattern list.
+echo "⚠️  gitleaks not installed — using grep fallback (less coverage)."
+echo "   install: brew install gitleaks"
+
+PATTERN='@wix\.com|wix-internal|astra-pr-review|#astra-pr|(grafana|kibana|jenkins|argus|atrium|astra)\.(wix|wixpress)\.|wixpress\.com'
+
+# Skip meta-files that legitimately contain the patterns as rule definitions.
+EXCLUDE_RE='^(\.gitleaks\.toml|\.githooks/|\.github/workflows/leak-scan\.yml)'
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -Ev "$EXCLUDE_RE" || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Build a filtered diff and scan it.
+DIFF=$(echo "$STAGED" | xargs -I {} git diff --cached -U0 -- "{}")
+
+if echo "$DIFF" | grep -E -i "$PATTERN" >/dev/null; then
+  echo "❌ blocked: staged diff matches forbidden Wix-internal pattern."
+  echo "   review: git diff --cached -- <staged-files> | grep -E -i '$PATTERN'"
+  exit 1
+fi

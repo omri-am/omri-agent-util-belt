@@ -87,6 +87,15 @@ ln -sf "$(pwd)" "$HOME/.claude/plugins/cache/marketplaces/omri-util-belt/omri-ag
 
 Then `/plugin reload` (or restart) picks up changes.
 
+### Leak-scan gate (one-time per clone)
+
+```bash
+git config core.hooksPath .githooks   # activate versioned pre-commit
+brew install gitleaks                 # optional but recommended (fallback is grep)
+```
+
+Pattern list lives in `.gitleaks.toml`. CI runs the same scan on every push/PR via `.github/workflows/leak-scan.yml`.
+
 ## Layout
 
 ```
