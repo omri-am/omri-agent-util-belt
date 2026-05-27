@@ -1,0 +1,14 @@
+{
+  "name": "omri-util-belt",
+  "owner": {
+    "name": "Omri Amit",
+    "email": "omry.amit@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "omri-agent-util-belt",
+      "source": "./",
+      "description": "Personal cross-tool skills, hooks, commands, and scripts for Claude Code."
+    }
+  ]
+}
