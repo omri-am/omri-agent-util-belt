@@ -341,9 +341,9 @@ def main():
     out = out_dir / f"claude-plan-{ts}.html"
     out.write_text(render_html(plan))
     # Sentinel for PreToolUse gate on ExitPlanMode — agent has visualized, allow exit.
-    # First line = session_id so gate can reject stale sentinels from prior sessions.
+    # Path is per-session so concurrent sessions never clobber each other's pass.
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    (out_dir / "visual-plan-ready").write_text(f"{session_id}\n{out}")
+    (out_dir / f"visual-plan-ready-{session_id}").write_text(str(out))
     print(str(out))
     if sys.platform == "darwin":
         subprocess.run(["open", str(out)], check=False)

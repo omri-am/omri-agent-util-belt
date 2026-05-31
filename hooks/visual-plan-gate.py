@@ -8,8 +8,6 @@ import json
 import sys
 import os
 
-SENTINEL = "/tmp/visual-plan-ready"
-
 
 def deny(reason):
     print(json.dumps({
@@ -35,26 +33,17 @@ def main():
     if data.get("tool_name") != "ExitPlanMode":
         allow()
         return
-    if os.path.exists(SENTINEL):
-        current_session = data.get("session_id", "")
-        sentinel_session = ""
+    # Per-session sentinel: each session owns its own file, so concurrent
+    # sessions never consume or clobber one another's pass.
+    session_id = data.get("session_id", "")
+    sentinel = f"/tmp/visual-plan-ready-{session_id}"
+    if session_id and os.path.exists(sentinel):
         try:
-            with open(SENTINEL) as f:
-                sentinel_session = f.readline().strip()
+            os.remove(sentinel)
         except OSError:
             pass
-        if sentinel_session and sentinel_session == current_session:
-            try:
-                os.remove(SENTINEL)
-            except OSError:
-                pass
-            allow()
-            return
-        # Stale sentinel from another session — remove and fall through to deny.
-        try:
-            os.remove(SENTINEL)
-        except OSError:
-            pass
+        allow()
+        return
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     render_path = (
         f"{plugin_root}/skills/visual-plan/scripts/render_plan.py"
@@ -70,7 +59,7 @@ def main():
         "(4) tell user to review + paste back APPROVED/REJECTED/MODIFY decision, "
         "(5) re-call ExitPlanMode only after user has reviewed. "
         "If user already said 'skip visual' or 'no html' this turn, write the sentinel manually: "
-        "`echo \"$CLAUDE_CODE_SESSION_ID\" > /tmp/visual-plan-ready` then re-call ExitPlanMode."
+        "`touch \"/tmp/visual-plan-ready-$CLAUDE_CODE_SESSION_ID\"` then re-call ExitPlanMode."
     )
 
 
