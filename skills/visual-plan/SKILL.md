@@ -9,12 +9,14 @@ Render a structured plan as a self-contained HTML page the user reviews in brows
 
 ## When to invoke
 
-- User finishes plan mode and wants visual review (instead of plain text ExitPlanMode).
+**Default plan-mode exit.** Render the plan visually *before* every `ExitPlanMode` call — full text plans are overwhelming and hard to read. A PreToolUse gate also enforces this, but the gate may silently fail-open (e.g. interpreter resolution, undocumented ExitPlanMode interaction), so do not rely on it: treat visual render as the standard step whether or not the gate fires.
+
+Also invoke when:
 - User says "visualize", "show me visually", "render plan as html", "browser plan".
 - Plan has alternative paths worth comparing side-by-side.
 - Plan affects UI/UX — simulation helps user judge feel before approving.
 
-If user just wants a quick text plan, skip this skill. Use only when visual review adds value.
+Skip only when the user explicitly opts out this turn ("skip visual", "no html", "just text"). On opt-out, write the sentinel manually so the gate clears: `touch "/tmp/visual-plan-ready-$CLAUDE_CODE_SESSION_ID"`, then call ExitPlanMode.
 
 ## Workflow
 
