@@ -43,3 +43,23 @@ description: Open a PR (GitHub CLI Workflow)
   - Inform the user: "Background CI monitor started. It will check every 10 minutes and attempt up to 3 fixes. Check `.claude-pr-monitor.log` for status."
 
 - After the PR is created, invoke the `review` skill (built-in `/review` command) to run a code review on the new PR's diff.
+  - Collect the review findings into a single Markdown summary. Format:
+    ```markdown
+    ## 🤖 Automated Code Review
+
+    <one-line summary of overall assessment>
+
+    ### Findings
+    - **<severity>** `<file>:<line>` — <issue>. <suggested fix>
+
+    _If no issues found, state: "No blocking issues found."_
+    ```
+  - Write the summary to a temp file and post it as a comment on the PR (avoids shell-quoting issues with multi-line Markdown):
+    ```bash
+    gh pr comment --body-file <(cat <<'EOF'
+    <generated_review_summary>
+    EOF
+    )
+    ```
+    - Alternatively, write the summary to a temp file (e.g. `/tmp/pr-review-$$.md`) and run `gh pr comment --body-file /tmp/pr-review-$$.md`.
+  - Confirm the comment posted, then display the PR URL again so the user can open the findings on the GitHub PR page.
