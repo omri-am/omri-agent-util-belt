@@ -6,7 +6,7 @@ description: Open a PR (GitHub CLI Workflow)
 # Open a PR (GitHub CLI Workflow)
 
 - Check if the current branch is `master`, `main`, or `prod`. If so:
-  - Get username from workspace path (e.g., `/Users/vladta/...` → `vladta`)
+  - Get the username from git/GitHub, not the filesystem path: `gh api user -q .login` (fall back to `git config user.name` if `gh` is unavailable)
   - Check the diff to understand changes
   - Generate a branch name from changes (format: `$USERNAME/<feature-name>`)
   - Create and checkout the branch: `git checkout -b $USERNAME/<branch-name>`
@@ -14,8 +14,9 @@ description: Open a PR (GitHub CLI Workflow)
 - Check the diff between the current branch and the default branch (`master` or `main`)
 - If there is unstaged or staged work that hasn't been committed:
   - Generate a commit message based on the changes
+  - Stage only the files relevant to this change — list them explicitly. Do NOT use `git add .` (it sweeps in unrelated/untracked files).
   - Execute the following chained command to Commit and Push in one step:
-    `GIT_EDITOR=true git add . && GIT_EDITOR=true git commit -m "<generated_message>" && git push -u origin HEAD`
+    `GIT_EDITOR=true git add <changed-file> [<changed-file> ...] && GIT_EDITOR=true git commit -m "<generated_message>" && git push -u origin HEAD`
 
 - Generate the PR details based on the diff using this format:
   - **Title**: `<feature_area>: <Title>` (80 chars or less)

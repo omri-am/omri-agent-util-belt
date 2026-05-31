@@ -26,12 +26,26 @@ if [ -z "$PR_NUMBER" ]; then
   exit 1
 fi
 
+# Single-instance guard: only one monitor per PR. mkdir is atomic across processes.
+LOCK_DIR="${PROJECT_DIR}/.claude-pr-monitor-${PR_NUMBER}.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  log "Another monitor is already running for PR #$PR_NUMBER (lock: $LOCK_DIR). Exiting."
+  exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 log "Started monitoring PR #$PR_NUMBER (branch: $BRANCH, max fixes: $MAX_FIX_ATTEMPTS, interval: ${CHECK_INTERVAL}s)"
 
+FIRST=1
 while true; do
-  log "Sleeping ${CHECK_INTERVAL}s before next check..."
-  sleep "$CHECK_INTERVAL"
+  # Check immediately on the first pass; sleep between subsequent checks.
+  if [ "$FIRST" -eq 1 ]; then
+    FIRST=0
+  else
+    log "Sleeping ${CHECK_INTERVAL}s before next check..."
+    sleep "$CHECK_INTERVAL"
+  fi
 
   # Re-check that the PR still exists and is open
   PR_STATE=$(gh pr view --json state -q .state 2>/dev/null || true)
@@ -40,14 +54,17 @@ while true; do
     exit 0
   fi
 
-  # Check CI status
-  CHECKS_OUTPUT=$(gh pr checks 2>&1 || true)
+  # Check CI status (human-readable, for logs + the fixer prompt)
+  CHECKS_OUTPUT=$(gh pr checks "$PR_NUMBER" 2>&1 || true)
   log "Checks output:\n$CHECKS_OUTPUT"
 
-  # Count states
-  FAIL_COUNT=$(echo "$CHECKS_OUTPUT" | grep -ci "fail" || true)
-  PASS_COUNT=$(echo "$CHECKS_OUTPUT" | grep -ci "pass" || true)
-  PENDING_COUNT=$(echo "$CHECKS_OUTPUT" | grep -ciE "pending|queued|in_progress|running" || true)
+  # Count states from the structured `bucket` enum (pass|fail|pending|skipping|cancel)
+  # via gh's built-in jq engine — avoids false matches on check names/URLs.
+  COUNTS=$(gh pr checks "$PR_NUMBER" --json bucket -q \
+    '"\([.[]|select(.bucket=="fail")]|length) \([.[]|select(.bucket=="pass")]|length) \([.[]|select(.bucket=="pending")]|length)"' \
+    2>/dev/null || true)
+  read -r FAIL_COUNT PASS_COUNT PENDING_COUNT <<< "${COUNTS:-0 0 0}"
+  FAIL_COUNT=${FAIL_COUNT:-0}; PASS_COUNT=${PASS_COUNT:-0}; PENDING_COUNT=${PENDING_COUNT:-0}
 
   if [ "$FAIL_COUNT" -eq 0 ] && [ "$PASS_COUNT" -gt 0 ] && [ "$PENDING_COUNT" -eq 0 ]; then
     log "All checks passed! Monitoring complete."
@@ -86,16 +103,25 @@ $FAILED_CHECKS_JSON
 ## Failed run IDs (use with 'gh run view <id> --log-failed'):
 $FAILED_RUN_IDS
 
+This is fix attempt $FIX_COUNT of $MAX_FIX_ATTEMPTS. Each attempt runs in a FRESH session
+with no memory of earlier ones — the ONLY record of prior attempts is on the PR itself.
+
 ## Your task:
-1. Read the failure logs: run 'gh run view <run-id> --log-failed' for each failed run ID above
-2. Analyze the root cause
-3. If you CLEARLY understand the issue: make a minimal fix, then run:
+1. FIRST, review what has already been tried so you do not repeat it:
+   - Read prior automated fix-attempt comments: 'gh pr view $PR_NUMBER --comments'
+   - Read recent fix commits on this branch: 'git log --oneline -10'
+2. Read the failure logs: run 'gh run view <run-id> --log-failed' for each failed run ID above
+3. Analyze the root cause. If the failure matches a fix already attempted (per step 1), do NOT repeat it —
+   output exactly "CANNOT_FIX: prior fix '<summary>' did not resolve this" and stop.
+4. If you CLEARLY understand the issue AND it differs from prior attempts: make a minimal fix, then run:
    git add <specific-files> && git commit -m "fix: <description>" && git push
-4. If you CANNOT read the logs or CANNOT understand the error: output exactly "CANNOT_FIX: <reason>" and stop
+   Then record this attempt as a PR comment so the next session can see it:
+   gh pr comment $PR_NUMBER --body "🤖 CI fix attempt $FIX_COUNT/$MAX_FIX_ATTEMPTS — diagnosis: <root cause>. Changed: <files>."
+5. If you CANNOT read the logs or CANNOT understand the error: output exactly "CANNOT_FIX: <reason>" and stop.
 
 ## Rules:
 - Only fix what the CI error points to. Do NOT touch unrelated code.
-- Do NOT retry the same fix that already failed.
+- Do NOT retry a fix already recorded in the PR comments or commit log from step 1.
 - Be surgical and minimal.
 PROMPT_EOF
   )
