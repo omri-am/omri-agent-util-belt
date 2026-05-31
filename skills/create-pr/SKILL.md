@@ -5,13 +5,18 @@ description: Open a PR (GitHub CLI Workflow)
 
 # Open a PR (GitHub CLI Workflow)
 
-- Check if the current branch is `master`, `main`, or `prod`. If so:
-  - Get the username from git/GitHub, not the filesystem path: `gh api user -q .login` (fall back to `git config user.name` if `gh` is unavailable)
-  - Check the diff to understand changes
-  - Generate a branch name from changes (format: `$USERNAME/<feature-name>`)
-  - Create and checkout the branch: `git checkout -b $USERNAME/<branch-name>`
+- Determine the branch name. It must be **meaningful** — derived from the actual changes, never an auto-generated/random slug (e.g. `cheerful-tablecloth`, `galvanized-mandolin`).
+  - Get the username from git/GitHub, not the filesystem path: `gh api user -q .login` (fall back to `git config user.name` if `gh` is unavailable).
+  - Inspect the diff and pick a short kebab-case `<feature-name>` describing what changed (e.g. `worktree-remote-diff`, `fix-token-expiry`). Format: `$USERNAME/<feature-name>`.
+  - **If current branch is `master`, `main`, or `prod`**: create and checkout the new branch: `git checkout -b $USERNAME/<feature-name>`.
+  - **If current branch is an auto-generated/random name** (common in worktrees): rename it in place: `git branch -m $USERNAME/<feature-name>`.
+  - **Otherwise** (branch already has a clear, intentional name): keep it as-is.
 
-- Check the diff between the current branch and the default branch (`master` or `main`)
+- Determine the base ref to diff against:
+  - Detect a linked worktree: `[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]` is true inside a worktree.
+  - **If inside a worktree**: the local default branch may be stale, so diff against the remote. Fetch first, then use the remote tracking ref:
+    `git fetch origin <default> && git diff origin/<default>...HEAD`
+  - **Otherwise**: diff against the local default branch (`master` or `main`): `git diff <default>...HEAD`
 - If there is unstaged or staged work that hasn't been committed:
   - Generate a commit message based on the changes
   - Stage only the files relevant to this change — list them explicitly. Do NOT use `git add .` (it sweeps in unrelated/untracked files).
