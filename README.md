@@ -30,7 +30,6 @@ Claude Code is the primary target (plugin format). Skills are portable to Codex 
 Shell utilities the commands and hooks shell out to.
 
 - `monitor-pr.sh` — backs `/monitor-pr`
-- `review-pr-background.sh` — kicks off a PR review in a detached process
 
 ### Memory (`memory/`)
 
