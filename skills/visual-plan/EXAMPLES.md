@@ -98,12 +98,76 @@
 }
 ```
 
+## Plan with a dependency graph (fan-out + converge) + before/after
+
+Use `depends_on` when steps aren't a straight line — here one setup step feeds two parallel steps that later converge. The renderer draws this as a diamond instead of a flat list, and `before`/`after` show the actual change on the steps where it matters.
+
+```json
+{
+  "title": "Add auth rate limiting",
+  "summary": "Throttle login + reset attempts to stop credential stuffing.",
+  "steps": [
+    {
+      "id": "1",
+      "title": "Add Redis attempt counter",
+      "detail": "Per-IP counter with sliding TTL window.",
+      "files": ["src/lib/ratelimit.ts"]
+    },
+    {
+      "id": "2",
+      "title": "Guard the login handler",
+      "detail": "Check + increment before verifying the password.",
+      "files": ["src/routes/login.ts"],
+      "depends_on": ["1"],
+      "before": "POST /login\n  -> verifyPassword(body)",
+      "after": "POST /login\n  -> rateLimit.check(ip)   // 429 if over\n  -> verifyPassword(body)"
+    },
+    {
+      "id": "3",
+      "title": "Guard the password-reset handler",
+      "detail": "Same counter, shared key namespace.",
+      "files": ["src/routes/reset.ts"],
+      "depends_on": ["1"]
+    },
+    {
+      "id": "4",
+      "title": "Throttled (429) page",
+      "detail": "Friendly retry-after message instead of a raw error.",
+      "files": ["src/views/throttled.tsx"],
+      "depends_on": ["2", "3"],
+      "optional": true,
+      "before": "(raw 429 JSON)",
+      "after": "<ThrottledNotice retryAfter={s} />"
+    }
+  ]
+}
+```
+
+Renders as:
+
+```
+            ┌──────────────────────┐
+            │ 1  Redis counter     │          ← shared prerequisite
+            └──────────┬───────────┘
+            ┌──────────┴───────────┐
+            ▼                      ▼
+┌──────────────────┐   ┌──────────────────┐
+│ 2  Login guard   │   │ 3  Reset guard   │   ← fan out, run in parallel
+└─────────┬────────┘   └────────┬─────────┘
+          └───────────┬─────────┘
+                      ▼
+            ┌──────────────────────┐
+            │ 4  Throttled page    │ optional  ← converge
+            └──────────────────────┘
+```
+
+Boxes recolor live (green/red/amber) as the user approves / rejects / modifies the matching step below.
+
 ## What user pastes back
 
 ```
-APPROVED: 1, 3
-REJECTED: 2
-MODIFY 2: use Cloudflare Worker instead, but skip captcha for now
+APPROVED: 1, 3, 4
+MODIFY 2: use a Cloudflare Worker for the guard instead of in-process, skip captcha for now
 ```
 
-Agent reads → implements steps 1 + 3, swaps step 2 for a worker per modify note.
+Agent reads → implements 1, 3, 4 as planned; reworks step 2 per the modify note. (Each id appears once — a step is approved, rejected, *or* modified, never two at once.)

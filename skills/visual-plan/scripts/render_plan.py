@@ -17,6 +17,30 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
+def render_before_after(step):
+    """Side-by-side current vs proposed state. Content is escaped + shown
+    monospace so code snippets read cleanly; omitted if neither present."""
+    before = step.get("before")
+    after = step.get("after")
+    if not before and not after:
+        return ""
+    before_body = esc(before) if before else "—"
+    after_body = esc(after) if after else "—"
+    return f"""
+      <div class="ba">
+        <div class="ba-col ba-before">
+          <div class="ba-label">Before</div>
+          <div class="ba-body">{before_body}</div>
+        </div>
+        <div class="ba-arrow">→</div>
+        <div class="ba-col ba-after">
+          <div class="ba-label">After</div>
+          <div class="ba-body">{after_body}</div>
+        </div>
+      </div>
+    """
+
+
 def render_step(step, idx):
     sid = esc(step.get("id", str(idx + 1)))
     title = esc(step.get("title", ""))
@@ -28,6 +52,7 @@ def render_step(step, idx):
         chips = "".join(f'<span class="chip">{esc(f)}</span>' for f in files)
         files_html = f'<div class="files">{chips}</div>'
     opt_badge = '<span class="badge-opt">optional</span>' if optional else ""
+    ba_html = render_before_after(step)
     return f"""
     <div class="step" data-step-id="{sid}">
       <div class="step-head">
@@ -43,6 +68,7 @@ def render_step(step, idx):
           <label class="btn modify"><input type="radio" name="dec-{sid}" value="modify">Modify</label>
         </div>
       </div>
+      {ba_html}
       <textarea class="modify-note" data-for="{sid}" placeholder="What to change about step {sid}..."></textarea>
     </div>
     """
@@ -101,6 +127,126 @@ def render_simulation(sim):
     """
 
 
+def compute_levels(steps):
+    """Assign each step a row (level) = longest dependency chain to a root.
+
+    Edges come from each step's `depends_on`. If NO step declares deps, fall
+    back to an implicit linear chain (step N depends on step N-1) so the graph
+    still shows order. Unknown dep ids are ignored; cycles fall back to level 0.
+    """
+    ids = [str(s.get("id", str(i + 1))) for i, s in enumerate(steps)]
+    id_set = set(ids)
+    deps = {}
+    for i, s in enumerate(steps):
+        sid = ids[i]
+        declared = [str(d) for d in (s.get("depends_on") or []) if str(d) in id_set]
+        deps[sid] = declared
+    if not any(deps[i] for i in ids):  # no explicit deps -> linear chain
+        deps = {ids[i]: ([ids[i - 1]] if i > 0 else []) for i in range(len(ids))}
+
+    level = {}
+
+    def lvl(sid, seen):
+        if sid in level:
+            return level[sid]
+        if sid in seen:  # cycle guard
+            return 0
+        if not deps.get(sid):
+            level[sid] = 0
+            return 0
+        seen = seen | {sid}
+        m = 1 + max(lvl(d, seen) for d in deps[sid])
+        level[sid] = m
+        return m
+
+    for sid in ids:
+        lvl(sid, set())
+    edges = [(d, sid) for sid in ids for d in deps.get(sid, [])]
+    return ids, level, edges
+
+
+def render_flow(steps):
+    """Inline SVG dependency graph. Nodes carry data-node=<id> so the
+    in-browser radio handler recolors them to match each step's decision."""
+    if len(steps) < 2:
+        return ""
+    ids, level, edges = compute_levels(steps)
+    titles = {
+        str(s.get("id", str(i + 1))): str(s.get("title", "")) for i, s in enumerate(steps)
+    }
+
+    rows = {}
+    for sid in ids:
+        rows.setdefault(level[sid], []).append(sid)
+    max_level = max(rows) if rows else 0
+
+    NW, NH = 168, 48          # node box
+    GX, GY = 28, 56           # gaps
+    MX, MY = 16, 16           # margins
+    max_cols = max((len(r) for r in rows.values()), default=1)
+    inner_w = max_cols * NW + (max_cols - 1) * GX
+    width = inner_w + 2 * MX
+    height = (max_level + 1) * NH + max_level * GY + 2 * MY
+
+    pos = {}  # id -> (x, y) of node top-left
+    for lv in range(max_level + 1):
+        row = rows.get(lv, [])
+        row_w = len(row) * NW + (len(row) - 1) * GX
+        x0 = MX + (inner_w - row_w) / 2
+        y = MY + lv * (NH + GY)
+        for j, sid in enumerate(row):
+            pos[sid] = (x0 + j * (NW + GX), y)
+
+    # Edges first (under nodes)
+    edge_svg = ""
+    for src, dst in edges:
+        if src not in pos or dst not in pos:
+            continue
+        sx, sy = pos[src]
+        dx, dy = pos[dst]
+        x1, y1 = sx + NW / 2, sy + NH
+        x2, y2 = dx + NW / 2, dy
+        my = (y1 + y2) / 2
+        edge_svg += (
+            f'<path class="fedge" d="M{x1:.0f},{y1:.0f} '
+            f'C{x1:.0f},{my:.0f} {x2:.0f},{my:.0f} {x2:.0f},{y2:.0f}" '
+            f'marker-end="url(#arrow)"/>'
+        )
+
+    node_svg = ""
+    for sid in ids:
+        x, y = pos[sid]
+        t = titles.get(sid, "")
+        if len(t) > 22:
+            t = t[:21] + "…"
+        node_svg += f"""
+        <g class="fnode is-approve" data-node="{esc(sid)}" transform="translate({x:.0f},{y:.0f})">
+          <rect class="fnode-box" width="{NW}" height="{NH}" rx="10"/>
+          <circle class="fnode-dot" cx="18" cy="{NH/2:.0f}" r="11"/>
+          <text class="fnode-num" x="18" y="{NH/2+4:.0f}" text-anchor="middle">{esc(sid)}</text>
+          <text class="fnode-title" x="38" y="{NH/2+4:.0f}">{esc(t)}</text>
+        </g>
+        """
+
+    return f"""
+    <section class="block">
+      <h2>Plan flow</h2>
+      <div class="sim-hint">How the steps connect. Boxes recolor with your approve / reject / modify choices below.</div>
+      <div class="flow-wrap">
+        <svg class="flow-svg" viewBox="0 0 {width:.0f} {height:.0f}" width="{width:.0f}" height="{height:.0f}" role="img" aria-label="Plan dependency flow">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#b8b1a4"/>
+            </marker>
+          </defs>
+          {edge_svg}
+          {node_svg}
+        </svg>
+      </div>
+    </section>
+    """
+
+
 def render_html(plan):
     title = esc(plan.get("title", "Plan"))
     summary = esc(plan.get("summary", ""))
@@ -109,6 +255,7 @@ def render_html(plan):
     sim = plan.get("simulation")
 
     steps_html = "".join(render_step(s, i) for i, s in enumerate(steps))
+    flow_html = render_flow(steps)
     alts_html = ""
     if alts:
         cards = "".join(render_alternative(a, i) for i, a in enumerate(alts))
@@ -191,6 +338,43 @@ def render_html(plan):
   }}
   .step.is-modify .modify-note {{ display: block; }}
 
+  /* Before / after */
+  .ba {{
+    display: grid; grid-template-columns: 1fr 20px 1fr; gap: 8px; align-items: stretch;
+    margin: 12px 0 2px;
+  }}
+  .ba-col {{ border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }}
+  .ba-label {{
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    padding: 4px 10px; color: var(--muted); border-bottom: 1px solid var(--line);
+  }}
+  .ba-before .ba-label {{ background: #fdf3f1; color: var(--bad); }}
+  .ba-after  .ba-label {{ background: #eef8f2; color: var(--ok); }}
+  .ba-body {{
+    padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink);
+  }}
+  .ba-arrow {{ align-self: center; text-align: center; color: var(--muted); font-size: 16px; }}
+
+  /* Plan flow graph */
+  .flow-wrap {{
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; overflow-x: auto;
+  }}
+  .flow-svg {{ display: block; max-width: 100%; height: auto; }}
+  .fedge {{ fill: none; stroke: #cfc8ba; stroke-width: 1.6; }}
+  .fnode-box {{ fill: #fff; stroke: var(--line); stroke-width: 1.5; transition: stroke .15s, fill .15s; }}
+  .fnode-dot {{ fill: var(--accent); transition: fill .15s; }}
+  .fnode-num {{ fill: #fff; font-size: 12px; font-weight: 600; }}
+  .fnode-title {{ fill: var(--ink); font-size: 12px; font-weight: 500; }}
+  .fnode.is-approve .fnode-box {{ stroke: var(--ok); }}
+  .fnode.is-approve .fnode-dot {{ fill: var(--ok); }}
+  .fnode.is-reject  .fnode-box {{ stroke: var(--bad); opacity: 0.85; }}
+  .fnode.is-reject  .fnode-dot {{ fill: var(--bad); }}
+  .fnode.is-reject  .fnode-title {{ fill: var(--muted); text-decoration: line-through; }}
+  .fnode.is-modify  .fnode-box {{ stroke: var(--warn); }}
+  .fnode.is-modify  .fnode-dot {{ fill: var(--warn); }}
+
   .alt-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }}
   .alt-card {{
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
@@ -240,6 +424,7 @@ def render_html(plan):
   <div class="summary">{summary}</div>
 </header>
 <main>
+  {flow_html}
   <section class="block">
     <h2>Plan steps</h2>
     {steps_html}
@@ -254,12 +439,21 @@ def render_html(plan):
 </div>
 
 <script>
-  // Step highlight + modify textarea reveal
+  // Keep the flow-graph node for a step in sync with its decision color
+  function syncFlowNode(id, value) {{
+    const node = document.querySelector('.fnode[data-node="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    if (!node) return;
+    node.classList.remove('is-approve', 'is-reject', 'is-modify');
+    node.classList.add('is-' + value);
+  }}
+
+  // Step highlight + modify textarea reveal + flow-node sync
   document.querySelectorAll('.step').forEach(step => {{
     const radios = step.querySelectorAll('input[type=radio]');
     radios.forEach(r => r.addEventListener('change', () => {{
       step.classList.remove('is-approve', 'is-reject', 'is-modify');
       step.classList.add('is-' + r.value);
+      syncFlowNode(step.dataset.stepId, r.value);
       updateSummary();
     }}));
     step.classList.add('is-approve');
