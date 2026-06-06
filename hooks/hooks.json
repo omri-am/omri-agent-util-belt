@@ -1,14 +1,16 @@
 {
-  "PreToolUse": [
-    {
-      "matcher": "ExitPlanMode",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/visual-plan-gate.py\"",
-          "timeout": 5
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/visual-plan-gate.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }
