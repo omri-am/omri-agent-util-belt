@@ -247,6 +247,112 @@ def render_flow(steps):
     """
 
 
+ENTITY_ICONS = {
+    "service": "🧩", "datastore": "🗄️", "db": "🗄️", "database": "🗄️",
+    "ui": "🪟", "screen": "🪟", "page": "🪟", "concept": "💡",
+    "actor": "🧑", "user": "🧑", "external": "🌐", "thirdparty": "🌐",
+    "queue": "📨", "event": "📨", "job": "⏱️", "cron": "⏱️",
+    "api": "🔌", "endpoint": "🔌", "file": "📄", "config": "⚙️", "data": "📦",
+}
+
+
+def _entity_icon(kind):
+    return ENTITY_ICONS.get((kind or "").strip().lower(), "▪️")
+
+
+def compute_stage(plan):
+    """Fold the plan into a sequence of system-state frames.
+
+    Frame 0 = `current`; each subsequent frame applies one step's `changes`
+    (add/modify/remove of entities) onto the running state; the final frame
+    overlays optional `future` notes. Returns None when no entities are
+    declared — the stage only earns its place when there's a system to show.
+    """
+    entities = plan.get("entities") or []
+    if not entities:
+        return None
+    steps = plan.get("steps", []) or []
+
+    eids, meta = [], {}
+    for i, e in enumerate(entities):
+        eid = str(e.get("id", e.get("label", f"e{i}")))
+        eids.append(eid)
+        meta[eid] = {"id": eid, "label": str(e.get("label", eid)), "icon": _entity_icon(e.get("kind"))}
+
+    current = plan.get("current") or {}
+    run = {}
+    for eid in eids:
+        c = current.get(eid) if isinstance(current.get(eid), dict) else {}
+        run[eid] = {"present": bool(c.get("present", True)), "state": str(c.get("state", ""))}
+
+    def snapshot(delta):
+        return {eid: {"present": run[eid]["present"], "state": run[eid]["state"], "delta": delta.get(eid)} for eid in eids}
+
+    stops = [{
+        "key": "now", "label": "Now", "sub": "Current state",
+        "caption": str(plan.get("summary", "") or "How things stand today."),
+        "states": snapshot({}),
+    }]
+
+    for i, s in enumerate(steps):
+        sid = str(s.get("id", str(i + 1)))
+        delta = {}
+        for ch in (s.get("changes") or []):
+            eid = str(ch.get("entity", ""))
+            if eid not in run:
+                continue
+            op = (ch.get("op") or "modify").strip().lower()
+            run[eid]["present"] = (op != "remove")
+            if ch.get("state") is not None:
+                run[eid]["state"] = str(ch.get("state"))
+            delta[eid] = op
+        stops.append({
+            "key": sid, "label": f"Step {sid}", "sub": str(s.get("title", "")),
+            "caption": str(s.get("detail", "") or s.get("title", "")),
+            "states": snapshot(delta),
+        })
+
+    future = plan.get("future") or {}
+    for eid, fv in future.items():
+        if eid in run and isinstance(fv, dict):
+            if fv.get("state") is not None:
+                run[eid]["state"] = str(fv.get("state"))
+            if "present" in fv:
+                run[eid]["present"] = bool(fv.get("present"))
+    stops.append({
+        "key": "done", "label": "Done", "sub": "Future state",
+        "caption": str(plan.get("outcome", "") or "The system once every step is done."),
+        "states": snapshot({}),
+    })
+
+    return {"entities": [meta[eid] for eid in eids], "stops": stops}
+
+
+def render_stage(stage):
+    if not stage:
+        return ""
+    # Embed as JSON; neutralize "</" so it can't terminate the <script> early.
+    data = json.dumps(stage, ensure_ascii=False).replace("</", "<\\/")
+    return f"""
+    <section class="block stage-block">
+      <h2>What changes</h2>
+      <div class="sim-hint">Step through the plan and watch the system move from now to done — ◀ / ▶ or Play, or click a point on the timeline.</div>
+      <div class="stage">
+        <div class="timeline" id="timeline"></div>
+        <div class="stage-controls">
+          <button class="stage-nav" id="stage-prev" type="button">◀ Back</button>
+          <button class="stage-play" id="stage-play" type="button">▶ Play</button>
+          <button class="stage-nav" id="stage-next" type="button">Next ▶</button>
+          <div class="stage-pos" id="stage-pos"></div>
+        </div>
+        <div class="stage-caption" id="stage-caption"></div>
+        <div class="entity-grid" id="entity-grid"></div>
+      </div>
+      <script id="stage-data" type="application/json">{data}</script>
+    </section>
+    """
+
+
 def render_html(plan):
     title = esc(plan.get("title", "Plan"))
     summary = esc(plan.get("summary", ""))
@@ -256,6 +362,7 @@ def render_html(plan):
 
     steps_html = "".join(render_step(s, i) for i, s in enumerate(steps))
     flow_html = render_flow(steps)
+    stage_html = render_stage(compute_stage(plan))
     alts_html = ""
     if alts:
         cards = "".join(render_alternative(a, i) for i, a in enumerate(alts))
@@ -404,6 +511,53 @@ def render_html(plan):
   }}
   .sim-hint {{ color: var(--muted); font-size: 13px; margin-bottom: 8px; }}
 
+  /* State-evolution stage (the hero) */
+  .stage {{
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+  }}
+  .timeline {{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }}
+  .tl-pill {{
+    display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+    background: #fff; color: var(--muted); border-radius: 999px; padding: 5px 12px;
+    font: inherit; font-size: 12px; cursor: pointer; transition: all .15s;
+  }}
+  .tl-pill .tl-dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: background .15s; }}
+  .tl-pill.active {{ border-color: var(--accent); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 2px rgba(107,78,255,.12); }}
+  .tl-pill.active .tl-dot {{ background: var(--accent); }}
+  .stage-controls {{ display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }}
+  .stage-nav, .stage-play {{
+    border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 12px;
+    font: inherit; font-size: 13px; cursor: pointer;
+  }}
+  .stage-play {{ border-color: var(--accent); color: var(--accent); font-weight: 600; }}
+  .stage-pos {{ margin-left: auto; color: var(--muted); font-size: 12px; }}
+  .stage-caption {{
+    color: var(--ink); font-size: 14px; min-height: 22px; margin-bottom: 14px;
+    padding: 6px 0 6px 12px; border-left: 3px solid var(--accent);
+    background: linear-gradient(90deg, rgba(107,78,255,.06), transparent);
+  }}
+  .entity-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }}
+  .ent-card {{
+    position: relative; display: flex; gap: 10px; align-items: flex-start;
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff;
+    transition: opacity .35s ease, border-color .35s ease, box-shadow .35s ease, transform .2s ease;
+  }}
+  .ent-ico {{ font-size: 20px; line-height: 1; }}
+  .ent-label {{ font-weight: 600; font-size: 14px; }}
+  .ent-state {{ color: var(--muted); font-size: 13px; margin-top: 3px; transition: color .35s; }}
+  .ent-badge {{
+    position: absolute; top: 8px; right: 10px; font-size: 9px; font-weight: 700;
+    letter-spacing: .06em; padding: 2px 6px; border-radius: 999px;
+  }}
+  .ent-card.absent {{ opacity: .4; border-style: dashed; }}
+  .ent-card.d-add {{ border-color: var(--ok); box-shadow: 0 0 0 2px rgba(47,158,107,.18); transform: translateY(-1px); }}
+  .ent-card.d-add .ent-badge {{ background: var(--ok); color: #fff; }}
+  .ent-card.d-modify {{ border-color: var(--warn); box-shadow: 0 0 0 2px rgba(196,115,58,.18); }}
+  .ent-card.d-modify .ent-badge {{ background: var(--warn); color: #fff; }}
+  .ent-card.d-remove {{ border-color: var(--bad); }}
+  .ent-card.d-remove .ent-badge {{ background: var(--bad); color: #fff; }}
+  .ent-card.d-remove .ent-label {{ text-decoration: line-through; }}
+
   .copybar {{
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--ink); color: #fff;
     padding: 14px 48px; display: flex; gap: 14px; align-items: center; justify-content: space-between;
@@ -424,6 +578,7 @@ def render_html(plan):
   <div class="summary">{summary}</div>
 </header>
 <main>
+  {stage_html}
   {flow_html}
   <section class="block">
     <h2>Plan steps</h2>
@@ -439,6 +594,78 @@ def render_html(plan):
 </div>
 
 <script>
+  // State-evolution stage: render system-state frames, driven by timeline / play
+  (function() {{
+    const dataEl = document.getElementById('stage-data');
+    if (!dataEl) return;
+    let STAGE;
+    try {{ STAGE = JSON.parse(dataEl.textContent); }} catch (e) {{ return; }}
+    const stops = STAGE.stops || [], ents = STAGE.entities || [];
+    if (!stops.length || !ents.length) return;
+
+    const tl = document.getElementById('timeline');
+    const grid = document.getElementById('entity-grid');
+    const cap = document.getElementById('stage-caption');
+    const posEl = document.getElementById('stage-pos');
+    const playBtn = document.getElementById('stage-play');
+    let idx = 0, timer = null;
+
+    // Timeline pills
+    stops.forEach((s, i) => {{
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'tl-pill';
+      const dot = document.createElement('span'); dot.className = 'tl-dot';
+      b.appendChild(dot); b.appendChild(document.createTextNode(s.label || ('#' + i)));
+      b.addEventListener('click', () => {{ stopPlay(); go(i); }});
+      tl.appendChild(b);
+    }});
+
+    // Entity cards (built once; textContent only — no injection)
+    const cards = {{}};
+    ents.forEach(e => {{
+      const card = document.createElement('div'); card.className = 'ent-card';
+      const ico = document.createElement('div'); ico.className = 'ent-ico'; ico.textContent = e.icon || '▪️';
+      const body = document.createElement('div'); body.className = 'ent-body';
+      const lab = document.createElement('div'); lab.className = 'ent-label'; lab.textContent = e.label || e.id;
+      const stt = document.createElement('div'); stt.className = 'ent-state';
+      body.appendChild(lab); body.appendChild(stt);
+      const badge = document.createElement('div'); badge.className = 'ent-badge';
+      card.appendChild(ico); card.appendChild(body); card.appendChild(badge);
+      grid.appendChild(card);
+      cards[e.id] = {{ card: card, state: stt, badge: badge }};
+    }});
+
+    function render() {{
+      const stop = stops[idx];
+      cap.textContent = stop.caption || '';
+      posEl.textContent = (idx + 1) + ' / ' + stops.length + '  ·  ' + (stop.sub || '');
+      Array.from(tl.children).forEach((p, i) => p.classList.toggle('active', i === idx));
+      ents.forEach(e => {{
+        const st = (stop.states && stop.states[e.id]) || {{}};
+        const ref = cards[e.id];
+        ref.card.classList.toggle('absent', !st.present);
+        ref.card.classList.remove('d-add', 'd-modify', 'd-remove');
+        if (st.delta === 'add') {{ ref.card.classList.add('d-add'); ref.badge.textContent = 'NEW'; }}
+        else if (st.delta === 'modify') {{ ref.card.classList.add('d-modify'); ref.badge.textContent = 'CHANGED'; }}
+        else if (st.delta === 'remove') {{ ref.card.classList.add('d-remove'); ref.badge.textContent = 'REMOVED'; }}
+        else {{ ref.badge.textContent = ''; }}
+        ref.state.textContent = st.state || (st.present ? '' : '—');
+      }});
+    }}
+    function go(i) {{ idx = Math.max(0, Math.min(stops.length - 1, i)); render(); }}
+    function stopPlay() {{ if (timer) {{ clearInterval(timer); timer = null; playBtn.textContent = '▶ Play'; }} }}
+
+    document.getElementById('stage-prev').addEventListener('click', () => {{ stopPlay(); go(idx - 1); }});
+    document.getElementById('stage-next').addEventListener('click', () => {{ stopPlay(); go(idx + 1); }});
+    playBtn.addEventListener('click', () => {{
+      if (timer) {{ stopPlay(); return; }}
+      if (idx >= stops.length - 1) go(0);
+      playBtn.textContent = '⏸ Pause';
+      timer = setInterval(() => {{ if (idx >= stops.length - 1) stopPlay(); else go(idx + 1); }}, 1500);
+    }});
+    render();
+  }})();
+
   // Keep the flow-graph node for a step in sync with its decision color
   function syncFlowNode(id, value) {{
     const node = document.querySelector('.fnode[data-node="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');

@@ -1,5 +1,67 @@
 # Examples
 
+## State-evolution plan (the centerpiece)
+
+This is the shape to reach for by default. Declare the **entities** the plan touches, their **current** state, and what each step **changes** — the renderer turns it into a timeline the reviewer scrubs from `Now` to `Done`, watching entities appear / change / disappear. Conceptual phrases only, never code.
+
+```json
+{
+  "title": "Add auth rate limiting",
+  "summary": "Today any client can hammer /login forever — credential stuffing is wide open.",
+  "outcome": "Repeated attempts get throttled with a 429; legit users are unaffected.",
+  "entities": [
+    {"id": "client",  "label": "Client / attacker", "kind": "actor"},
+    {"id": "login",   "label": "Login endpoint",    "kind": "endpoint"},
+    {"id": "counter", "label": "Attempt counter",   "kind": "datastore"},
+    {"id": "page",    "label": "Throttled page",    "kind": "ui"}
+  ],
+  "current": {
+    "client":  {"present": true,  "state": "unlimited login attempts"},
+    "login":   {"present": true,  "state": "verifies password, no limit"},
+    "counter": {"present": false},
+    "page":    {"present": false}
+  },
+  "steps": [
+    {
+      "id": "1", "title": "Add attempt counter",
+      "detail": "A per-IP counter with a sliding TTL window.",
+      "changes": [{"entity": "counter", "op": "add", "state": "per-IP count, 15-min window"}]
+    },
+    {
+      "id": "2", "title": "Guard the login endpoint",
+      "detail": "Login checks the counter before verifying the password.",
+      "depends_on": ["1"],
+      "changes": [
+        {"entity": "login",  "op": "modify", "state": "checks counter, 429 if over limit"},
+        {"entity": "client", "op": "modify", "state": "blocked after 5 tries"}
+      ]
+    },
+    {
+      "id": "3", "title": "Throttled page", "optional": true,
+      "detail": "Friendly retry-after screen instead of a raw error.",
+      "depends_on": ["2"],
+      "changes": [{"entity": "page", "op": "add", "state": "shows retry-after countdown"}]
+    }
+  ],
+  "future": {
+    "login":  {"state": "throttled, then verifies"},
+    "client": {"state": "rate-limited"}
+  }
+}
+```
+
+The timeline the reviewer scrubs (each frame, what's present + what just changed):
+
+```
+ Now      client · login                         "…credential stuffing is wide open."
+ Step 1   + counter            (NEW)             "A per-IP counter with a sliding TTL window."
+ Step 2   ~ login  ~ client    (CHANGED)         "Login checks the counter before verifying."
+ Step 3   + page               (NEW, optional)   "Friendly retry-after screen…"
+ Done     client · login · counter · page        "…throttled with a 429; legit users unaffected."
+```
+
+Entities that aren't touched at a given step sit quiet; the one(s) a step changes light up green (add) / amber (modify) / red (remove). The reviewer *sees* the system fill in, not reads a list.
+
 ## Minimal plan (no alternatives, no simulation)
 
 ```json
