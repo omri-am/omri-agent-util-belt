@@ -1,0 +1,47 @@
+{
+  "skill_name": "architect-review",
+  "evals": [
+    {
+      "id": 0,
+      "name": "over-engineering-cache",
+      "prompt": "/architect-review",
+      "expected_output": "Spawns a read-only architect that flags the Redis cache layer as over-engineered for weekly-changing config; one round (bare = N=1); main agent simplifies the design.",
+      "files": ["dirty working tree: config_service.py adds a Redis cache + 50-conn pool + scan-based invalidation for ~weekly config"],
+      "assertions": [
+        "A separate architect critique was produced (architect_review_round_1.md exists).",
+        "The critique contains the headers Critical Flaws, There Is a Better Way, and Probing Questions.",
+        "The critique ends with a VERDICT: APPROVED or VERDICT: CHANGES_REQUIRED line.",
+        "The critique flags the Redis layer as over-engineered for ~weekly data.",
+        "Exactly one critique round ran (bare invocation defaults to N=1).",
+        "The applied fix simplifies the design (drops redis / in-process cache or plain DB read)."
+      ]
+    },
+    {
+      "id": 1,
+      "name": "n-plus-one-iterate",
+      "prompt": "/architect-review 3",
+      "expected_output": "Detects branch-diff scope (clean tree); round 1 flags N+1 query and requests changes; main agent batches queries; round 2 re-review approves before budget exhausts.",
+      "files": ["clean tree, committed on feature/order-summary: report.py order_summary does 2 queries per user over thousands of users"],
+      "assertions": [
+        "Round 1 critique identifies the N+1 query pattern.",
+        "The fix removes the per-user loop and uses batched IN (...) queries.",
+        "The architect was re-spawned for round 2 and verified the round-1 concern was resolved.",
+        "The loop converged to VERDICT: APPROVED within the 3-round budget.",
+        "Each round's critique ends with a VERDICT line."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "sound-change-restraint",
+      "prompt": "/architect-review",
+      "expected_output": "Architect approves a clean, well-scoped refactor on the first round without manufacturing flaws; no fix applied.",
+      "files": ["dirty working tree: pricing.py extracts a pure _subtotal helper + adds a test file"],
+      "assertions": [
+        "The architect returns VERDICT: APPROVED on the first round.",
+        "No blocking Critical Flaws were invented (Critical Flaws reports none blocking).",
+        "No unnecessary code fix was applied (final diff equals the original change).",
+        "The critique ends with a VERDICT line."
+      ]
+    }
+  ]
+}
