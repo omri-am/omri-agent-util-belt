@@ -12,6 +12,7 @@ Claude Code is the primary target (plugin format). Skills are portable to Codex 
 |-------|------|
 | `visual-plan` | Renders plan-mode output as an interactive HTML page with clickable simulation, alternative paths, and per-step approve/reject controls. Auto-fires before `ExitPlanMode` via the bundled hook. |
 | `create-pr` | Open a PR (GitHub CLI workflow). Generates branch name from path, drafts commit + PR description from the diff. |
+| `architect-review` | Adversarial principal-engineer critique of your own recent changes (uncommitted edits, branch, or diff) before merge. `/architect-review` runs one read-only pass; `/architect-review N` runs N rounds of critique → fix → re-review, stopping early on approval. |
 
 ### Hooks (`hooks/`)
 
@@ -47,7 +48,7 @@ Add to `.claude/settings.json` in the target repo (or `~/.claude/settings.json` 
     "omri-util-belt": {
       "source": {
         "source": "github",
-        "repo": "<your-gh-user>/omri-agent-util-belt"
+        "repo": "omri-am/omri-agent-util-belt"
       }
     }
   },
@@ -62,9 +63,24 @@ Restart Claude Code. The plugin is installed on first launch.
 ### Manual one-time install
 
 ```
-/plugin marketplace add <your-gh-user>/omri-agent-util-belt
+/plugin marketplace add omri-am/omri-agent-util-belt
 /plugin install omri-agent-util-belt@omri-util-belt
 ```
+
+### Updating (getting new skills)
+
+New skills land in `skills/` and are discovered by directory convention — no manifest edit needed. Once a new skill is pushed to `main`, installed users pull it by refreshing the marketplace catalog:
+
+```
+/plugin marketplace update omri-util-belt   # refresh catalog + plugin contents from GitHub
+/reload-plugins                             # apply without restarting
+```
+
+(There is no `/plugin update` command — the marketplace refresh pulls the latest plugin contents.)
+
+Auto-update is **off by default** for third-party marketplaces like this one, so updates are manual unless enabled. To turn it on: `/plugin` → **Marketplaces** tab → select `omri-util-belt` → **Enable auto-update**. With it on, Claude Code refreshes at startup and prompts `/reload-plugins`.
+
+New *plugins* added to `marketplace.json` appear in the **Discover** tab after the same `marketplace update` step, then install with `/plugin install <name>@omri-util-belt`.
 
 ### Codex / Gemini
 
