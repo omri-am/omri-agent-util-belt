@@ -28,6 +28,16 @@ Skip only when the user explicitly opts out this turn ("skip visual", "no html",
 - `render_plan.py` drops that sentinel — so **running the renderer is what unblocks the gate.**
 - **The sentinel proves a render happened, not that the user decided.** Do not let the cleared gate trick you into exiting early: after rendering, *end your turn*. Re-call `ExitPlanMode` only in a later turn, after the user has pasted a decision (or has explicitly said to proceed without one).
 
+## Grounding — do this before building the JSON
+
+A plan is only useful if it's anchored in the *real* codebase, not an abstract proposal. Before writing the JSON:
+
+- **Read the real files, schemas, and patterns first.** Name actual files, symbols, and data shapes — don't invent them. Entity labels and file paths must be things that exist (or will) in this repo.
+- **Lead with reuse.** For each step, name what it *reuses* (existing modules, helpers, endpoints, tables) before what it genuinely adds. Reuse is signal; it tells the reviewer the change fits the grain of the codebase.
+- **Decide the hard-to-reverse bets first.** Wire formats, public IDs, data-model shapes, auth/ownership boundaries — these are expensive to undo once callers or data depend on them. Mark those steps `"stakes": "high"` and, when a bet is genuinely open, raise it in `open_questions`.
+
+For wide exploration, delegate to a sub-agent rather than reading everything inline.
+
 ## Workflow
 
 1. **Build plan JSON** — structure plan into the schema below. First identify the 3–7 **entities** the plan touches and their `current` state, then write each step's `changes` as conceptual transitions on those entities (this drives the state model — the part that makes the page worth rendering). Keep `detail` and entity `state` phrases short; skip implementation line-noise and code.
@@ -59,8 +69,10 @@ Skip only when the user explicitly opts out this turn ("skip visual", "no html",
       "id": "1",
       "title": "Step title",
       "detail": "Short what + why. No line numbers.",
-      "files": ["src/foo.ts", "src/bar.ts"],
+      "files": ["src/foo.ts", {"path": "src/bar.ts", "op": "new"}],
       "optional": false,
+      "stakes": "high",
+      "stakes_reason": "public wire format — callers depend on it",
       "depends_on": [],
       "changes": [
         {"entity": "counter", "op": "add", "state": "per-IP count, 15-min window"}
@@ -68,6 +80,9 @@ Skip only when the user explicitly opts out this turn ("skip visual", "no html",
       "before": "current state / code (optional, rarely needed)",
       "after": "proposed state / code (optional, rarely needed)"
     }
+  ],
+  "open_questions": [
+    {"id": "q1", "question": "Decision that needs the reviewer's judgment?", "note": "optional context / the trade-off"}
   ],
   "alternatives": [
     {
@@ -99,6 +114,11 @@ Notes — the state model (the centerpiece):
 - `future` — optional `entityId → {state, present}` overrides applied at the final "Done" frame, for end-state phrasing that's cleaner than the last step's wording. `outcome` is the one-line caption at that frame.
 - Unknown entity ids in `changes`/`current`/`future` are ignored. If a plan has no `entities`, the stage is omitted — so always provide them unless the plan genuinely has no system to show (e.g. a pure doc edit).
 
+Notes — grounding & decisions:
+- `files` — real repo paths the step touches. A path can be a bare string, or `{"path", "op"}` where `op` is `new` | `edit` | `delete`. All steps' files aggregate into a **Files touched** tree (the blast radius on the real layout), with per-file op markers and the steps that touch each. Use real paths — this is grounding, not decoration.
+- `stakes` — set `"high"` on a step whose choice is expensive to undo (wire format, public IDs, data-model shape, auth boundary). Adds a ⚠ "hard to undo" badge + red accent so the reviewer's attention lands there. Add `stakes_reason` for the one-line why. Use sparingly — if everything's high-stakes, nothing is.
+- `open_questions` — plan-level list of decisions needing the reviewer's judgment (`id`, `question`, optional `note` with the trade-off). Renders as a single block at the bottom; the reviewer types an answer per question and it rides back in the pasted decision as `Q1: …`. Raise the genuinely-open hard-to-reverse bets here rather than silently picking.
+
 Notes — secondary aids:
 - `depends_on` — step `id`s this step needs first. Drives the **Plan flow** graph. Omit everywhere → linear 1→2→3 chain. Use when steps fan out or converge. Unknown ids ignored; no cycles.
 - `before` / `after` — rarely needed now. Only when a *literal* code snippet is the clearest way to show one step's change; otherwise model it with entity `changes` instead. Plain text, escaped, monospace.
@@ -117,6 +137,9 @@ Don't fill every field — noise hides signal. The state model is the default; t
 | Steps fan out / converge / have a shared prerequisite | `depends_on` (flow graph) |
 | Plan changes UI/UX and you want to feel the screens | `simulation` |
 | More than one viable approach | `alternatives` |
+| Any step touches real files | `files` (feeds the Files-touched tree) |
+| A step's choice is expensive to undo | `stakes: "high"` on that step |
+| A decision genuinely needs the reviewer's call | `open_questions` |
 | A single step is clearest as a literal code snippet | `before` / `after` on that step (rare) |
 | Pure doc/config edit with no system to model | minimal — just steps |
 
@@ -127,15 +150,18 @@ APPROVED: 1, 2, 4
 REJECTED: 3
 MODIFY 5: <user's note about what to change>
 ALT: <name of alternative if user picked one>
+Q1: <answer to open question q1>
+Q2: <answer to open question q2>
 ```
 
-Each step id appears under exactly one verb — a step is approved, rejected, *or* modified, never two at once. Free-form text after — treat as additional feedback. If user pastes only "approve all" / "looks good", implement everything.
+Each step id appears under exactly one verb — a step is approved, rejected, *or* modified, never two at once. `Q<id>:` lines are the reviewer's answers to `open_questions` (only the ones they answered appear). Free-form text after — treat as additional feedback. If user pastes only "approve all" / "looks good", implement everything.
 
 ## After decision
 
 - Implement only `APPROVED` steps in order.
 - For `MODIFY`, ask one clarifying question if note is ambiguous, otherwise apply.
 - If `ALT` picked, re-plan with that alternative — may need a second visual-plan iteration.
+- For each `Q<id>:` answer, apply the reviewer's decision to the relevant steps. If a hard-to-reverse question was left unanswered, ask it before building that part.
 - Don't touch `REJECTED` steps even tangentially.
 
 ## See also

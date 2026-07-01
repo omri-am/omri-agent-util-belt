@@ -25,12 +25,15 @@ This is the shape to reach for by default. Declare the **entities** the plan tou
     {
       "id": "1", "title": "Add attempt counter",
       "detail": "A per-IP counter with a sliding TTL window.",
+      "files": [{"path": "src/lib/ratelimit.ts", "op": "new"}],
       "changes": [{"entity": "counter", "op": "add", "state": "per-IP count, 15-min window"}]
     },
     {
       "id": "2", "title": "Guard the login endpoint",
       "detail": "Login checks the counter before verifying the password.",
       "depends_on": ["1"],
+      "stakes": "high", "stakes_reason": "public 429 contract — callers depend on it",
+      "files": [{"path": "src/routes/login.ts", "op": "edit"}],
       "changes": [
         {"entity": "login",  "op": "modify", "state": "checks counter, 429 if over limit"},
         {"entity": "client", "op": "modify", "state": "blocked after 5 tries"}
@@ -40,15 +43,35 @@ This is the shape to reach for by default. Declare the **entities** the plan tou
       "id": "3", "title": "Throttled page", "optional": true,
       "detail": "Friendly retry-after screen instead of a raw error.",
       "depends_on": ["2"],
+      "files": [{"path": "src/views/throttled.tsx", "op": "new"}],
       "changes": [{"entity": "page", "op": "add", "state": "shows retry-after countdown"}]
     }
   ],
   "future": {
     "login":  {"state": "throttled, then verifies"},
     "client": {"state": "rate-limited"}
-  }
+  },
+  "open_questions": [
+    {"id": "q1", "question": "Store the counter in Redis or in-process?",
+     "note": "Redis survives restarts + shares across instances; in-proc is simpler but per-node."},
+    {"id": "q2", "question": "Return 429 or 503 when throttled?"}
+  ]
 }
 ```
+
+Beyond the timeline, this plan also renders a grounded **Files touched** tree, a ⚠ hard-to-undo badge on step 2, and an **Open questions** block the reviewer answers inline:
+
+```
+Files touched                         Open questions
+ src/                                  q1  Store counter in Redis or in-process?
+   lib/ratelimit.ts   + new  (step 1)      [ your call ....................... ]
+   routes/login.ts    ~ edit (step 2)  q2  Return 429 or 503 when throttled?
+   views/throttled.tsx + new (step 3)      [ ............................... ]
+
+Step 2  Guard the login endpoint  ⚠ hard to undo
+```
+
+The reviewer's answers come back appended to the decision block (`Q1: use Redis`, `Q2: 429`).
 
 The timeline the reviewer scrubs (each frame, what's present + what just changed):
 

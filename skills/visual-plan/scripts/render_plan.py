@@ -52,13 +52,19 @@ def render_step(step, idx):
         chips = "".join(f'<span class="chip">{esc(f)}</span>' for f in files)
         files_html = f'<div class="files">{chips}</div>'
     opt_badge = '<span class="badge-opt">optional</span>' if optional else ""
+    stakes = (str(step.get("stakes", "")) or "").lower()
+    stakes_cls = " stakes-high" if stakes == "high" else ""
+    stakes_badge = ""
+    if stakes == "high":
+        reason = esc(step.get("stakes_reason", "hard to reverse once callers/data depend on it"))
+        stakes_badge = f'<span class="badge-stakes" title="{reason}">⚠ hard to undo</span>'
     ba_html = render_before_after(step)
     return f"""
-    <div class="step" data-step-id="{sid}">
+    <div class="step{stakes_cls}" data-step-id="{sid}">
       <div class="step-head">
         <div class="step-num">{sid}</div>
         <div class="step-titles">
-          <div class="step-title">{title} {opt_badge}</div>
+          <div class="step-title">{title} {opt_badge} {stakes_badge}</div>
           <div class="step-detail">{detail}</div>
           {files_html}
         </div>
@@ -353,6 +359,93 @@ def render_stage(stage):
     """
 
 
+def _norm_file(f):
+    """A step's file may be a bare path string or {path, op}. op ∈ new|edit|delete."""
+    if isinstance(f, dict):
+        return str(f.get("path", "")), (str(f.get("op")).lower() if f.get("op") else None)
+    return str(f), None
+
+
+def render_file_tree(steps):
+    """Aggregate every step's files into a real directory tree with new/edit/
+    delete markers and the steps that touch each — the plan's blast radius on
+    the actual repo layout (grounding: real paths, not abstractions)."""
+    entries = {}
+    for i, s in enumerate(steps):
+        sid = str(s.get("id", str(i + 1)))
+        for f in (s.get("files") or []):
+            path, op = _norm_file(f)
+            if not path:
+                continue
+            e = entries.setdefault(path, {"op": None, "steps": []})
+            if op:
+                e["op"] = op
+            if sid not in e["steps"]:
+                e["steps"].append(sid)
+    if not entries:
+        return ""
+
+    tree = {}
+    for path in sorted(entries):
+        parts = [p for p in path.split("/") if p]
+        node = tree
+        for p in parts[:-1]:
+            node = node.setdefault(p, {})
+        node.setdefault("__files__", []).append((parts[-1] if parts else path, path))
+
+    op_badge = {
+        "new": '<span class="ft-op ft-new">+ new</span>',
+        "edit": '<span class="ft-op ft-edit">~ edit</span>',
+        "delete": '<span class="ft-op ft-del">− delete</span>',
+    }
+
+    def render_node(node):
+        out = ""
+        for name in sorted(k for k in node if k != "__files__"):
+            out += f'<li class="ft-dir"><span class="ft-name">{esc(name)}/</span><ul>{render_node(node[name])}</ul></li>'
+        for fname, full in node.get("__files__", []):
+            e = entries[full]
+            badge = op_badge.get(e["op"], "")
+            steps_lbl = ", ".join(e["steps"])
+            out += (f'<li class="ft-file"><span class="ft-name">{esc(fname)}</span> {badge}'
+                    f'<span class="ft-steps">step {esc(steps_lbl)}</span></li>')
+        return out
+
+    return f"""
+    <section class="block">
+      <h2>Files touched</h2>
+      <div class="sim-hint">The real repo paths this plan changes — its blast radius.</div>
+      <ul class="filetree">{render_node(tree)}</ul>
+    </section>
+    """
+
+
+def render_open_questions(qs):
+    """Single bottom block of decisions needing the reviewer's judgment.
+    Answers are collected into the pasted decision (Q<id>: ...)."""
+    if not qs:
+        return ""
+    rows = ""
+    for i, q in enumerate(qs):
+        qid = str(q.get("id", f"q{i + 1}"))
+        text = esc(q.get("question", ""))
+        note = q.get("note", "")
+        note_html = f'<div class="oq-note">{esc(note)}</div>' if note else ""
+        rows += f"""
+        <div class="oq">
+          <div class="oq-q"><span class="oq-tag">{esc(qid)}</span>{text}</div>
+          {note_html}
+          <textarea class="oq-answer" data-qid="{esc(qid)}" placeholder="Your call (leave blank to defer)"></textarea>
+        </div>"""
+    return f"""
+    <section class="block oq-block">
+      <h2>Open questions</h2>
+      <div class="sim-hint">Decisions that need your judgment. Answers ride back with the decision below.</div>
+      {rows}
+    </section>
+    """
+
+
 def render_html(plan):
     title = esc(plan.get("title", "Plan"))
     summary = esc(plan.get("summary", ""))
@@ -363,6 +456,8 @@ def render_html(plan):
     steps_html = "".join(render_step(s, i) for i, s in enumerate(steps))
     flow_html = render_flow(steps)
     stage_html = render_stage(compute_stage(plan))
+    tree_html = render_file_tree(steps)
+    questions_html = render_open_questions(plan.get("open_questions"))
     alts_html = ""
     if alts:
         cards = "".join(render_alternative(a, i) for i, a in enumerate(alts))
@@ -558,6 +653,42 @@ def render_html(plan):
   .ent-card.d-remove .ent-badge {{ background: var(--bad); color: #fff; }}
   .ent-card.d-remove .ent-label {{ text-decoration: line-through; }}
 
+  /* Hard-to-reverse flag */
+  .badge-stakes {{
+    background: var(--bad); color: #fff; font-size: 11px; font-weight: 600;
+    padding: 1px 8px; border-radius: 999px; margin-left: 6px; white-space: nowrap;
+  }}
+  .step.stakes-high {{ box-shadow: inset 3px 0 0 var(--bad), 0 0 0 1px rgba(193,69,61,.25); }}
+
+  /* File tree */
+  .filetree, .filetree ul {{ list-style: none; margin: 0; padding-left: 16px; }}
+  .filetree {{ padding-left: 2px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }}
+  .ft-dir > .ft-name {{ color: var(--muted); font-weight: 600; }}
+  .ft-file {{ display: flex; align-items: center; gap: 8px; padding: 1px 0; }}
+  .ft-file .ft-name {{ color: var(--ink); }}
+  .ft-op {{ font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }}
+  .ft-new {{ background: #eef8f2; color: var(--ok); }}
+  .ft-edit {{ background: #fdf6ee; color: var(--warn); }}
+  .ft-del {{ background: #fdf3f1; color: var(--bad); }}
+  .ft-steps {{ color: var(--muted); font-size: 11px; }}
+
+  /* Open questions */
+  .oq-block {{ border-top: 1px dashed var(--line); padding-top: 8px; }}
+  .oq {{
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }}
+  .oq-q {{ font-size: 14px; font-weight: 500; }}
+  .oq-tag {{
+    display: inline-block; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px; margin-right: 8px; text-transform: uppercase;
+  }}
+  .oq-note {{ color: var(--muted); font-size: 13px; margin: 6px 0 0; }}
+  .oq-answer {{
+    display: block; width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 6px; font: inherit; resize: vertical; min-height: 44px;
+  }}
+
   .copybar {{
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--ink); color: #fff;
     padding: 14px 48px; display: flex; gap: 14px; align-items: center; justify-content: space-between;
@@ -584,8 +715,10 @@ def render_html(plan):
     <h2>Plan steps</h2>
     {steps_html}
   </section>
+  {tree_html}
   {alts_html}
   {sim_html}
+  {questions_html}
 </main>
 
 <div class="copybar">
@@ -724,6 +857,10 @@ def render_html(plan):
     out += 'REJECTED: ' + (rejected.join(', ') || '(none)') + '\\n';
     modified.forEach(m => out += `MODIFY ${{m.id}}: ${{m.note}}\\n`);
     if (altPick) out += 'ALT: ' + altPick.value + '\\n';
+    document.querySelectorAll('.oq-answer').forEach(t => {{
+      const v = t.value.trim();
+      if (v) out += (t.dataset.qid || 'Q').toUpperCase() + ': ' + v + '\\n';
+    }});
     return out.trim();
   }}
   function updateSummary() {{
