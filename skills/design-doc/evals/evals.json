@@ -1,0 +1,50 @@
+{
+  "skill_name": "design-doc",
+  "evals": [
+    {
+      "id": 0,
+      "name": "webhook-relay-clean",
+      "prompt": "hey so we've been going back and forth on this webhook relay thing, let's get it written up. Basically: external partners send us webhooks, but their retry behavior is unreliable and sometimes duplicate, so we want a thin webhook-ingest service that just receives the raw webhook, dedupes by an idempotency key header, and drops it on a queue. Then webhook-processor picks messages off the queue and calls the actual internal handler logic for that partner. Main flow: partner POSTs to ingest -> ingest checks Redis for the idempotency key, if new it publishes to the queue and returns 200, if duplicate it just returns 200 without republishing. Processor consumes from queue and dispatches to handler. Ingest owns an IdempotencyKey entity (key, first-seen timestamp, ttl). Processor doesn't hold any state itself. Can you write this up as a design doc in google docs?",
+      "expected_output": "A Google Doc with exactly the 5 required headings, an architecture mermaid diagram with 2 nodes (webhook-ingest, webhook-processor), one sequence diagram for the ingest flow, IdempotencyKey entity under webhook-ingest, 'No entities' under webhook-processor, and 'None identified' under Open Questions since none were raised.",
+      "files": [],
+      "expectations": [
+        "The doc has exactly these 5 headings, in this order: Overview, Architecture, Happy flow in sequence diagram for main use cases, Services and entities, Open questions",
+        "The Overview section is at most 2 paragraphs",
+        "The Architecture diagram has exactly 2 nodes: webhook-ingest and webhook-processor, with no method names or payload/field details on the edges",
+        "There is at least one sequence diagram covering the ingest -> queue -> processor flow",
+        "webhook-ingest lists an IdempotencyKey entity",
+        "webhook-processor is explicitly marked as having no entities",
+        "Open questions section says something equivalent to 'None identified' since none were raised in the conversation"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "order-system-v1-migration",
+      "prompt": "Here's the old design doc we wrote for order processing a while back, pasting it in for context: [v1 doc with a single monolithic order-service]. Yeah that v1 never really worked out \u2014 as we've discussed over the last few calls, we're splitting it up into order-service, payment-service, inventory-service, notification-service, each with named entities. Two main flows: place order and cancel order. Two open questions raised: retry-on-timeout (technical) and partial-fulfillment-cancel semantics (product). Turn this into a fresh design doc, don't reference the old v1 doc.",
+      "expected_output": "A standalone Google Doc with 4 services in the architecture diagram, 2 sequence diagrams (place order, cancel order), entities correctly attributed per service, notification-service marked 'No entities', both open questions present and correctly tagged [Technical]/[Product], and no mention of 'v1', 'previous doc', or 'changes from' anywhere in the new doc.",
+      "files": [],
+      "expectations": [
+        "The doc has exactly these 5 headings, in this order: Overview, Architecture, Happy flow in sequence diagram for main use cases, Services and entities, Open questions",
+        "The Architecture diagram has exactly 4 nodes: order-service, payment-service, inventory-service, notification-service",
+        "There are 2 sequence diagrams: one for placing an order, one for cancelling an order",
+        "Order entity is under order-service, PaymentAttempt under payment-service, Stock under inventory-service",
+        "notification-service is explicitly marked as having no entities",
+        "Both open questions appear (payment retry-on-timeout, partial-fulfillment cancel semantics), each tagged [Technical] or [Product] correctly",
+        "The doc contains no reference to 'v1', 'the old doc', 'previous version', or any 'changes from'/diff-style framing"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "search-service-ambiguous",
+      "prompt": "We're adding a search-service in front of the existing product catalog (catalog-service). search-service subscribes to catalog-service's product-updated events, builds its own Elasticsearch index, serves search queries. Main flow: client queries search-service -> hits ES index -> returns ranked product ids -> client fetches full details from catalog-service. Ambiguous: is autocomplete part of search-service or a separate unscoped thing? Entity/index shape for search-service was never discussed. Can you doc this up?",
+      "expected_output": "A design doc that does NOT invent an Elasticsearch mapping/entity shape for search-service (says something like 'No entities discussed' rather than fabricating fields), and either asks a clarifying question about autocomplete or surfaces it as a [Product] open question rather than silently deciding it either way.",
+      "files": [],
+      "expectations": [
+        "The doc has exactly these 5 headings, in this order: Overview, Architecture, Happy flow in sequence diagram for main use cases, Services and entities, Open questions",
+        "search-service's entity/index shape is NOT fabricated with specific fields/mappings that were never discussed in the conversation",
+        "The autocomplete ambiguity is surfaced as an open question (or the executor asked about it) rather than being silently resolved one way or the other",
+        "The Architecture diagram shows catalog-service and search-service with a general 'subscribes to updates' style edge, no method/API names"
+      ]
+    }
+  ]
+}
