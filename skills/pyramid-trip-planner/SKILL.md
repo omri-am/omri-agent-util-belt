@@ -46,7 +46,11 @@ Do not move to Phase 3 until the user has picked a path or clearly synthesized o
 
 ## Phase 3 — Step-by-Step Build-Up
 
-Once a Big Picture path is chosen, build it up in layers rather than jumping straight to a full daily grid: regions/legs and how many nights each roughly gets, then within each region the anchor activities and pacing, then (only when the user wants that level of detail) day-by-day. Keep checking against the constraints already locked in the dashboard — budget pace, physical intensity, accommodation mix — rather than re-deriving them.
+Once a Big Picture path is chosen, the first thing to do is decompose it into legs — not jump straight to a full daily grid. A leg is whatever unit of the trip is distinct enough to reason about on its own: a city, a region, a multi-stop drive, a single activity block. Record each one in `architecture.legs` (schema below) with a name, roughly how many nights, and coordinates if you know them.
+
+**You choose the grain, and it doesn't have to be uniform across the trip.** A 9-night Kyoto stay might be one leg; a 2-night hike-and-onsen stretch might be another; three one-night stops on a coastal drive might collapse into a single "coastal drive" leg because splitting them further wouldn't change how you plan or research them. The test is whether treating it separately actually buys you a narrower, more useful context — if a chunk of the trip has its own distinct logistics, climate window, or research needs, give it its own leg; if several days are really one continuous thing, don't force artificial boundaries.
+
+Legs exist for a reason beyond routing: they're the scope you and the user actually think in from here on. Once a leg is named, tag every wishlist item, agent note, rejected point, and pending decision that's specific to it with that leg's exact name (the `leg` field, schema below) rather than leaving everything trip-wide. This does two things — it narrows what you need to hold in mind when researching or building out any one leg (see Research subagents below), and it lets the user filter the dashboard down to just that leg instead of scanning the whole board. Only after legs are named and tagged do you build out anchor activities and pacing within each, then (only if the user wants that level of detail) day-by-day. Keep checking against the constraints already locked in the dashboard — budget pace, physical intensity, accommodation mix — rather than re-deriving them.
 
 ## Persistent memory: hot state + cold archive
 
@@ -81,9 +85,11 @@ On the first turn of a new trip, create this directory and write `dashboard_stat
     "accommodation": "mix of styles, anything specific"
   },
   "wishlist": [
-    {"item": "Great Barrier Reef", "status": "confirmed", "note": "optional context", "lat": -18.29, "lng": 147.7}
+    {"item": "Great Barrier Reef", "status": "confirmed", "note": "optional context", "lat": -18.29, "lng": 147.7, "leg": "Melbourne"}
   ],
-  "agent_notes": ["scratchpad: seasonal flags, hidden-gem ideas, unresolved risks — active ones only"],
+  "agent_notes": [
+    {"text": "scratchpad: seasonal flags, hidden-gem ideas, unresolved risks — active ones only", "leg": "Melbourne"}
+  ],
   "architecture": {
     "chosen_path": "name of the locked Big Picture path, or null before Phase 2 concludes",
     "legs": [
@@ -91,7 +97,9 @@ On the first turn of a new trip, create this directory and write `dashboard_stat
     ]
   },
   "rejected": [{"item": "2 months solely in Indonesia", "reason": "why it got cut, not just that it did"}],
-  "pending_decisions": ["what the user needs to answer next"],
+  "pending_decisions": [
+    {"text": "what the user needs to answer next", "leg": "Melbourne"}
+  ],
   "memory_log": [{"turn": 12, "summary": "one line: what changed and why"}],
   "memory_log_total": 12,
   "memory_log_archive_path": "memory/log.jsonl"
@@ -101,9 +109,10 @@ On the first turn of a new trip, create this directory and write `dashboard_stat
 Notes on the fields that aren't self-explanatory:
 
 - **`wishlist[].status`** — `confirmed` / `pending` / `seasonal_conflict` / `cut`. `lat`/`lng` are optional and can be added as soon as you know a rough location, even in Discovery, before that item is part of any locked route — your own geographic knowledge is precise enough here, there's no need to look up exact coordinates.
-- **`architecture.legs`** — only populate once a Big Picture path is locked (Phase 2+). `order` drives the route line on the map, so keep it sequential.
+- **`architecture.legs`** — only populate once a Big Picture path is locked (Phase 2+, filled in during Phase 3 — see above on choosing leg granularity). `order` drives the route line on the map, so keep it sequential. Each leg's `name` is the identifier every other `leg` field below must match exactly, character for character — that's what makes a note's tag actually link back to this leg on the dashboard.
+- **`leg`** (on `wishlist[]`, `agent_notes[]`, `rejected[]`, `pending_decisions[]`) — optional, and meaningless before `architecture.legs` exists (nothing to tag against yet, so just omit it in Phases 1-2). Once legs are defined, add it to any entry that's specific to one rather than trip-wide — it narrows your own working context per leg and lets the user filter the dashboard down to just that leg. Leave it off for anything genuinely trip-wide (overall budget math, the NYE-city decision before a route exists); untagged entries still show on the board, just always visible regardless of which leg filter is active.
 - **`rejected`** — anything cut gets a reason, not just removal, and stays in hot state permanently (unlike agent notes, this list rarely gets big enough to need archiving, and "why did we cut this" is exactly the question the board exists to answer).
-- **`agent_notes`** — active scratchpad only. Once a note's question is resolved (the risk got confirmed and acted on, the idea got adopted or dropped), take it out of hot state — it's already reflected in the decision it fed into, and its provenance lives in `memory_log`/`log.jsonl` if anyone needs to trace it back.
+- **`agent_notes` / `pending_decisions`** — each entry is `{"text": ..., "leg": ...}` (`leg` optional, per above); a plain string also works if you don't have a leg to attach yet. `agent_notes` is an active scratchpad only — once a note's question is resolved (the risk got confirmed and acted on, the idea got adopted or dropped), take it out of hot state. It's already reflected in the decision it fed into, and its provenance lives in `memory_log`/`log.jsonl` if anyone needs to trace it back.
 - **`memory_log`** — the *recent tail only* (last ~10-15 entries), one line per turn where something material changed. `memory_log_total` and `memory_log_archive_path` tell the reader (and the dashboard) how much more history exists and where — the board renders an "N earlier entries archived" note using them.
 
 Every turn, do both of the following — they're not redundant, they serve different jobs:
@@ -123,7 +132,7 @@ After writing `dashboard_state.json`, run:
 python3 <skill-dir>/scripts/render_dashboard.py ./.trip-planner/<slug>/dashboard_state.json
 ```
 
-This writes `dashboard.html` next to the state file and opens it in the default browser (macOS `open` / Linux `xdg-open`). It's a static templating script — no LLM calls, no network access at render time — so re-running it every turn costs nothing. The page itself uses Leaflet with Esri's free World Street Map tiles (free, no API key) for the map — Esri's basemap labels places in English worldwide, unlike raw OpenStreetMap raster tiles which render each region's local script; that's the only network traffic, and it's the reader's browser fetching it, not yours. The board lays out every profile field, wishlist item, agent note, rejected point (with its reason), and pending decision as a draggable sticky note color-coded by kind and status, plus a legend; locked route legs and candidate wishlist locations plot on the map, connected in order once a route is locked; and a collapsible memory log at the bottom lets the user scroll back through what changed and when. The legend doubles as a filter — clicking a category (e.g. "Parked / rejected") hides those notes so the board doesn't stay overwhelming as it fills up over a long trip; a "show all" link resets it. Worth mentioning to the user once, since it's not obvious from a static screenshot.
+This writes `dashboard.html` next to the state file and opens it in the default browser on the *first* render of a trip (macOS `open` / Linux `xdg-open`) — later re-renders just overwrite the file and print a reminder to refresh the existing tab, rather than launching a new one every turn. It's a static templating script — no LLM calls, no network access at render time — so re-running it every turn costs nothing. The page itself uses Leaflet with Esri's free World Street Map tiles (free, no API key) for the map — Esri's basemap labels places in English worldwide, unlike raw OpenStreetMap raster tiles which render each region's local script; that's the only network traffic, and it's the reader's browser fetching it, not yours. The board lays out every profile field, wishlist item, agent note, rejected point (with its reason), and pending decision as a draggable sticky note color-coded by kind and status, plus a legend; locked route legs and candidate wishlist locations plot on the map, connected in order once a route is locked; and a collapsible memory log at the bottom lets the user scroll back through what changed and when. The legend doubles as a filter — clicking a category (e.g. "Parked / rejected") hides those notes, and the rest re-pack upward to fill the gap, so the board doesn't stay overwhelming as it fills up over a long trip. Once `architecture.legs` exists, a second filter row appears below it — one chip per leg, colored to match, plus a catch-all "not yet assigned to a leg" chip — so the user can narrow the whole board down to a single leg the same way. A "show all" link resets both rows. Both filter rows also drive the map — a hidden category or leg removes its markers there too, and the dashed route line redraws through only whichever legs are still visible. Worth mentioning to the user once, since it's not obvious from a static screenshot.
 
 Browsers don't watch local files for changes, so tell the user to refresh the tab after you re-render — don't assume it updates itself.
 
@@ -135,5 +144,6 @@ Some of what Phase 1 and Phase 2 need isn't in your training data with confidenc
 
 - **Perishable or specific facts** about a named destination — "is the Daintree actually accessible in January," current visa rules, whether a specific route/ferry still runs. If you're confident and the fact is stable (regional geography, general climate patterns), just say it — a subagent is overkill for something you already know well.
 - **Comparing Big Picture paths in Phase 2** — when 2-3 candidate paths each hinge on different regions, run one research subagent per path in parallel rather than researching serially. This keeps the comparison apples-to-apples and doesn't stall the conversation on sequential lookups.
+- **Building out legs in Phase 3** — once a path is locked and decomposed into legs, a leg is the natural unit of research: it's already a narrow, well-defined scope (one region, a specific date window, a specific activity) rather than a whole multi-region path. Dispatch one research subagent per leg in parallel when several need real research (opening days for a specific leg's anchor activity, a specific trailhead's access conditions), same reasoning as the Phase 2 parallel-path research above.
 
 Have each research subagent report back its findings in full, save that write-up to `memory/research/<topic-slug>.md`, and fold only a short pointer summary into `agent_notes` or the relevant wishlist item's `note` (see the memory section above) — don't paste an unfiltered dump into hot state or the dashboard itself.
