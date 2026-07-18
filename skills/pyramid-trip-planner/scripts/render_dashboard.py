@@ -68,12 +68,12 @@ STATUS_META = {
 }
 
 
-def note_card(packer, kind, label, title, body, color, bg, extra=""):
+def note_card(packer, kind, filter_key, label, title, body, color, bg, extra=""):
     h = est_height(f"{title} {body}")
     x, y = packer.place(h)
     rot = ((hash(title) % 7) - 3) * 0.6
     return f"""
-    <div class="note note-{kind}" style="left:{x}px;top:{y}px;width:{COL_WIDTH}px;
+    <div class="note note-{kind}" data-filter="{esc(filter_key)}" style="left:{x}px;top:{y}px;width:{COL_WIDTH}px;
          --pin:{color};--rot:{rot:.1f}deg;">
       <div class="note-label" style="color:{color};">{esc(label)}</div>
       <div class="note-title">{esc(title)}</div>
@@ -95,7 +95,7 @@ def render_profile_notes(packer, profile):
     for label, val in fields:
         if not val:
             continue
-        out += note_card(packer, "profile", "PROFILE", label, esc(val), "#4a6fa5", "#eef2f8")
+        out += note_card(packer, "profile", "profile", "PROFILE", label, esc(val), "#4a6fa5", "#eef2f8")
     return out
 
 
@@ -107,7 +107,8 @@ def render_wishlist_notes(packer, wishlist):
         strike = "text-decoration:line-through;opacity:.65;" if status == "cut" else ""
         body = f'<div style="{strike}">{esc(item.get("note", ""))}</div>' if item.get("note") else ""
         out += note_card(
-            packer, "wishlist", f"WISHLIST · {status_label}", item.get("item", ""), body, color, bg
+            packer, "wishlist", f"wishlist-{status}", f"WISHLIST · {status_label}",
+            item.get("item", ""), body, color, bg
         )
     return out
 
@@ -115,7 +116,7 @@ def render_wishlist_notes(packer, wishlist):
 def render_agent_notes(packer, notes):
     out = ""
     for n in notes or []:
-        out += note_card(packer, "agent", "AGENT NOTE", "", f"<div>{esc(n)}</div>", "#8b6fc4", "#f2eefa")
+        out += note_card(packer, "agent", "agent", "AGENT NOTE", "", f"<div>{esc(n)}</div>", "#8b6fc4", "#f2eefa")
     return out
 
 
@@ -123,14 +124,14 @@ def render_rejected_notes(packer, rejected):
     out = ""
     for r in rejected or []:
         body = f'<div class="reason">Why: {esc(r.get("reason", ""))}</div>'
-        out += note_card(packer, "rejected", "PARKED / REJECTED", r.get("item", ""), body, "#c1453d", "#fdeeed")
+        out += note_card(packer, "rejected", "rejected", "PARKED / REJECTED", r.get("item", ""), body, "#c1453d", "#fdeeed")
     return out
 
 
 def render_pending_notes(packer, pending):
     out = ""
     for i, p in enumerate(pending or [], 1):
-        out += note_card(packer, "pending", "PENDING DECISION", f"{i}.", esc(p), "#b8952e", "#fbf6e6")
+        out += note_card(packer, "pending", "pending", "PENDING DECISION", f"{i}.", esc(p), "#b8952e", "#fbf6e6")
     return out
 
 
@@ -314,6 +315,9 @@ def render_html(state):
     transform: rotate(var(--rot, 0deg)); cursor: grab; user-select: none;
     transition: box-shadow .15s;
   }}
+  /* Applied only during a filter-triggered reflow, never while dragging —
+     dragging sets left/top on every mousemove and would feel laggy if animated. */
+  .note.reflow-anim {{ transition: left .25s ease, top .25s ease, box-shadow .15s; }}
   .note:active {{ cursor: grabbing; box-shadow: 4px 10px 18px rgba(0,0,0,.35); z-index: 50; }}
   .note::before {{
     content: ""; position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
@@ -326,9 +330,22 @@ def render_html(state):
   .note-rejected .note-title {{ text-decoration: line-through; color: #8a5a56; }}
   .note .reason {{ font-style: italic; color: #7a4a46; margin-top: 4px; }}
 
-  .legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }}
-  .legend span {{ display: inline-flex; align-items: center; gap: 5px; }}
-  .legend i {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; }}
+  h2 {{ display: flex; align-items: center; gap: 12px; }}
+  .show-all-btn {{
+    text-transform: none; letter-spacing: normal; font-size: 12px; cursor: pointer;
+    color: var(--muted); text-decoration: underline; display: none;
+  }}
+  .show-all-btn.visible {{ display: inline; }}
+  .legend-hint {{ font-size: 11px; color: var(--muted); margin-bottom: 6px; }}
+  .legend {{ display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; font-size: 12px; color: var(--muted); }}
+  .legend span {{
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none;
+    padding: 3px 9px 3px 7px; border-radius: 999px; border: 1px solid transparent;
+    transition: opacity .15s, background .15s;
+  }}
+  .legend span:hover {{ background: #fff; border-color: var(--line); }}
+  .legend span.off {{ opacity: .4; text-decoration: line-through; }}
+  .legend i {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }}
 
   .log {{ background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }}
   .log summary {{ cursor: pointer; font-size: 13px; color: var(--muted); }}
@@ -349,22 +366,23 @@ def render_html(state):
 </header>
 <main>
   {map_html}
-  <h2>Corkboard</h2>
-  <div class="legend">
-    <span><i style="background:#4a6fa5"></i>Profile</span>
-    <span><i style="background:#2f9e6b"></i>Wishlist — confirmed</span>
-    <span><i style="background:#c4733a"></i>Wishlist — pending / seasonal flag</span>
-    <span><i style="background:#8a8578"></i>Wishlist — cut</span>
-    <span><i style="background:#8b6fc4"></i>Agent note</span>
-    <span><i style="background:#c1453d"></i>Parked / rejected</span>
-    <span><i style="background:#b8952e"></i>Pending decision</span>
+  <h2>Corkboard <span class="show-all-btn" id="show-all">show all</span></h2>
+  <div class="legend-hint">Click a category to hide/show those notes.</div>
+  <div class="legend" id="legend">
+    <span data-filter="profile"><i style="background:#4a6fa5"></i>Profile</span>
+    <span data-filter="wishlist-confirmed"><i style="background:#2f9e6b"></i>Wishlist — confirmed</span>
+    <span data-filter="wishlist-pending,wishlist-seasonal_conflict"><i style="background:#c4733a"></i>Wishlist — pending / seasonal flag</span>
+    <span data-filter="wishlist-cut"><i style="background:#8a8578"></i>Wishlist — cut</span>
+    <span data-filter="agent"><i style="background:#8b6fc4"></i>Agent note</span>
+    <span data-filter="rejected"><i style="background:#c1453d"></i>Parked / rejected</span>
+    <span data-filter="pending"><i style="background:#b8952e"></i>Pending decision</span>
   </div>
   <div class="board-wrap">
     <div id="board" style="width:{packer.board_width}px;height:{packer.board_height}px;">
       {notes_html}
     </div>
   </div>
-  <div class="hint">Drag any note to rearrange. This board is a snapshot of dashboard_state.json — ask your assistant to update it any time and re-render.</div>
+  <div class="hint">Drag any note to rearrange (toggling a filter re-packs the board and resets manual dragging). This board is a snapshot of dashboard_state.json — ask your assistant to update it any time and re-render.</div>
   {log_html}
 </main>
 <script>
@@ -388,6 +406,57 @@ def render_html(state):
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     }});
+  }});
+
+  // Corkboard filter: click a legend chip to hide/show its category of notes.
+  // Hidden notes are removed from layout, and the rest re-pack upward into a
+  // fresh masonry so filtering actually declutters instead of leaving gaps
+  // where the hidden notes used to sit. This overrides any manual dragging —
+  // reflow always recomputes from scratch on every filter change.
+  const legend = document.getElementById('legend');
+  const showAllBtn = document.getElementById('show-all');
+  const board = document.getElementById('board');
+  const NUM_COLS = {packer.cols};
+  const COL_WIDTH = {packer.col_width};
+  const GAP = {packer.gap};
+
+  function reflow() {{
+    const visible = [...board.querySelectorAll('.note')].filter(n => n.style.display !== 'none');
+    const colHeights = new Array(NUM_COLS).fill(GAP);
+    visible.forEach(note => note.classList.add('reflow-anim'));
+    visible.forEach(note => {{
+      let idx = 0;
+      for (let i = 1; i < NUM_COLS; i++) {{
+        if (colHeights[i] < colHeights[idx]) idx = i;
+      }}
+      note.style.left = (idx * (COL_WIDTH + GAP)) + 'px';
+      note.style.top = colHeights[idx] + 'px';
+      colHeights[idx] += note.offsetHeight + GAP;
+    }});
+    board.style.height = (Math.max(...colHeights) + 40) + 'px';
+    setTimeout(() => visible.forEach(note => note.classList.remove('reflow-anim')), 300);
+  }}
+
+  function applyFilters() {{
+    const offKeys = new Set();
+    legend.querySelectorAll('span.off').forEach(chip => {{
+      chip.dataset.filter.split(',').forEach(k => offKeys.add(k));
+    }});
+    document.querySelectorAll('.note').forEach(note => {{
+      note.style.display = offKeys.has(note.dataset.filter) ? 'none' : '';
+    }});
+    showAllBtn.classList.toggle('visible', offKeys.size > 0);
+    reflow();
+  }}
+  legend.querySelectorAll('span[data-filter]').forEach(chip => {{
+    chip.addEventListener('click', () => {{
+      chip.classList.toggle('off');
+      applyFilters();
+    }});
+  }});
+  showAllBtn.addEventListener('click', () => {{
+    legend.querySelectorAll('span.off').forEach(chip => chip.classList.remove('off'));
+    applyFilters();
   }});
 </script>
 </body>
