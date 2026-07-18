@@ -13,6 +13,7 @@ Claude Code is the primary target (plugin format). Skills are portable to Codex 
 | `visual-plan` | Renders plan-mode output as an interactive HTML page with clickable simulation, alternative paths, and per-step approve/reject controls. Auto-fires before `ExitPlanMode` via the bundled hook. |
 | `create-pr` | Open a PR (GitHub CLI workflow). Generates branch name from path, drafts commit + PR description from the diff. |
 | `architect-review` | Adversarial principal-engineer critique of your own recent changes (uncommitted edits, branch, or diff) before merge. `/architect-review` runs one read-only pass; `/architect-review N` runs N rounds of critique → fix → re-review, stopping early on approval. |
+| `pyramid-trip-planner` | Destination-agnostic long-trip planner using a "Deep Discovery → Big Picture paths → Step-by-step build-up" pyramid method. Backed by a persistent hot/cold state file and an interactive corkboard-and-map HTML dashboard (`scripts/render_dashboard.py`). |
 
 ### Hooks (`hooks/`)
 
