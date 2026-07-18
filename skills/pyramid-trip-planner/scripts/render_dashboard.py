@@ -8,10 +8,13 @@ calls, no LLM involved — the only network traffic at view time is the
 reader's own browser fetching the Leaflet library and OpenStreetMap tiles,
 and only when the state actually has coordinates to plot.
 """
+import calendar as cal_module
+import datetime
 import html
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,10 +22,23 @@ from pathlib import Path
 NUM_COLS = 4
 COL_WIDTH = 250
 GAP = 20
+BODY_WORD_LIMIT = 35
 
 
 def esc(s):
     return html.escape(str(s), quote=True)
+
+
+def clamp_body(text, limit=BODY_WORD_LIMIT):
+    """Cap free-form note text at `limit` words so long notes don't dominate the
+    board — full text is never lost, just moved to a native hover tooltip via
+    the returned title attribute (empty string when nothing was cut)."""
+    text = str(text)
+    words = text.split()
+    if len(words) <= limit:
+        return esc(text), ""
+    short = " ".join(words[:limit]) + "…"
+    return esc(short), f' title="{esc(text)}"'
 
 
 def est_height(text, label_lines=1):
@@ -89,7 +105,25 @@ def text_and_leg(entry):
     return entry.get("text", ""), entry.get("leg")
 
 
-def note_card(packer, kind, filter_key, label, title, body, color, bg, leg=TRIP_WIDE, leg_colors=None, extra=""):
+def photo_fragment(photo):
+    """Small <img> + attribution line for a {"url", "credit", "page_url"} photo
+    object. Always credited and linked back to its source page — these are
+    someone else's photos, never generated or owned by the agent or user."""
+    if not photo or not photo.get("url"):
+        return ""
+    credit = photo.get("credit") or "source"
+    page_url = photo.get("page_url")
+    credit_html = (
+        f'<a href="{esc(page_url)}" target="_blank" rel="noopener">{esc(credit)}</a>'
+        if page_url else esc(credit)
+    )
+    return (
+        f'<img src="{esc(photo["url"])}" loading="lazy" class="note-photo" alt="">'
+        f'<div class="photo-credit">Photo: {credit_html}</div>'
+    )
+
+
+def note_card(packer, kind, filter_key, label, title, body, color, bg, leg=TRIP_WIDE, leg_colors=None, photo=None, extra=""):
     leg_colors = leg_colors or {}
     if leg == TRIP_WIDE:
         leg_attr = ""  # empty data-leg = always visible, exempt from the leg filter
@@ -98,12 +132,19 @@ def note_card(packer, kind, filter_key, label, title, body, color, bg, leg=TRIP_
     leg_badge = ""
     if leg and leg != TRIP_WIDE and leg in leg_colors:
         leg_badge = f'<div class="leg-tag" style="background:{leg_colors[leg]}">{esc(leg)}</div>'
-    h = est_height(f"{title} {body}") + (26 if leg_badge else 0)
+    photo_html = photo_fragment(photo)
+    # Strip tags/attributes before measuring — a truncated body's hidden
+    # `title="..."` tooltip attribute holds the *full* untruncated text, which
+    # would otherwise inflate the height estimate for exactly the notes this
+    # was meant to shrink.
+    visible_text = re.sub(r"<[^>]+>", "", f"{title} {body}")
+    h = est_height(visible_text) + (26 if leg_badge else 0) + (118 if photo_html else 0)
     x, y = packer.place(h)
     rot = ((hash(title) % 7) - 3) * 0.6
     return f"""
     <div class="note note-{kind}" data-filter="{esc(filter_key)}" data-leg="{leg_attr}" style="left:{x}px;top:{y}px;width:{COL_WIDTH}px;
          --pin:{color};--rot:{rot:.1f}deg;">
+      {photo_html}
       <div class="note-label" style="color:{color};">{esc(label)}</div>
       <div class="note-title">{esc(title)}</div>
       <div class="note-body">{body}</div>
@@ -125,7 +166,8 @@ def render_profile_notes(packer, profile):
     for label, val in fields:
         if not val:
             continue
-        out += note_card(packer, "profile", "profile", "PROFILE", label, esc(val), "#4a6fa5", "#eef2f8")
+        short, title_attr = clamp_body(val)
+        out += note_card(packer, "profile", "profile", "PROFILE", label, f"<div{title_attr}>{short}</div>", "#4a6fa5", "#eef2f8")
     return out
 
 
@@ -135,10 +177,14 @@ def render_wishlist_notes(packer, wishlist, leg_colors):
         status = item.get("status", "pending")
         color, bg, status_label = STATUS_META.get(status, STATUS_META["pending"])
         strike = "text-decoration:line-through;opacity:.65;" if status == "cut" else ""
-        body = f'<div style="{strike}">{esc(item.get("note", ""))}</div>' if item.get("note") else ""
+        body = ""
+        if item.get("note"):
+            short, title_attr = clamp_body(item["note"])
+            body = f'<div style="{strike}"{title_attr}>{short}</div>'
         out += note_card(
             packer, "wishlist", f"wishlist-{status}", f"WISHLIST · {status_label}",
             item.get("item", ""), body, color, bg, leg=item.get("leg"), leg_colors=leg_colors,
+            photo=item.get("photo"),
         )
     return out
 
@@ -147,8 +193,9 @@ def render_agent_notes(packer, notes, leg_colors):
     out = ""
     for n in notes or []:
         text, leg = text_and_leg(n)
+        short, title_attr = clamp_body(text)
         out += note_card(
-            packer, "agent", "agent", "AGENT NOTE", "", f"<div>{esc(text)}</div>",
+            packer, "agent", "agent", "AGENT NOTE", "", f"<div{title_attr}>{short}</div>",
             "#8b6fc4", "#f2eefa", leg=leg, leg_colors=leg_colors,
         )
     return out
@@ -157,7 +204,8 @@ def render_agent_notes(packer, notes, leg_colors):
 def render_rejected_notes(packer, rejected, leg_colors):
     out = ""
     for r in rejected or []:
-        body = f'<div class="reason">Why: {esc(r.get("reason", ""))}</div>'
+        short, title_attr = clamp_body(r.get("reason", ""))
+        body = f'<div class="reason"{title_attr}>Why: {short}</div>'
         out += note_card(
             packer, "rejected", "rejected", "PARKED / REJECTED", r.get("item", ""), body,
             "#c1453d", "#fdeeed", leg=r.get("leg"), leg_colors=leg_colors,
@@ -169,17 +217,179 @@ def render_pending_notes(packer, pending, leg_colors):
     out = ""
     for i, p in enumerate(pending or [], 1):
         text, leg = text_and_leg(p)
+        short, title_attr = clamp_body(text)
         out += note_card(
-            packer, "pending", "pending", "PENDING DECISION", f"{i}.", esc(text),
+            packer, "pending", "pending", "PENDING DECISION", f"{i}.", f"<div{title_attr}>{short}</div>",
             "#b8952e", "#fbf6e6", leg=leg, leg_colors=leg_colors,
         )
     return out
 
 
+def parse_date(s):
+    try:
+        return datetime.date.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def render_calendar(architecture, leg_colors):
+    legs = (architecture or {}).get("legs") or []
+    dated = []
+    for l in legs:
+        start = parse_date(l.get("start_date"))
+        end = parse_date(l.get("end_date"))
+        if start and end and end >= start:
+            dated.append({
+                "name": l.get("name", ""), "start": start, "end": end,
+                "color": leg_colors.get(l.get("name"), UNASSIGNED_LEG_COLOR),
+            })
+
+    if not dated:
+        return """
+        <section class="block">
+          <h2>Trip calendar</h2>
+          <div class="map-placeholder">Calendar fills in once specific dates are locked for at least
+          one leg — set <code>start_date</code>/<code>end_date</code> (YYYY-MM-DD) on that leg.</div>
+        </section>
+        """
+
+    dated.sort(key=lambda d: d["start"])
+    first, last = dated[0]["start"], dated[-1]["end"]
+
+    def day_leg(d):
+        for entry in dated:
+            if entry["start"] <= d <= entry["end"]:
+                return entry
+        return None
+
+    months = []
+    y, m = first.year, first.month
+    while (y, m) <= (last.year, last.month):
+        months.append((y, m))
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+
+    month_html = ""
+    for (y, m) in months:
+        weeks = cal_module.Calendar(firstweekday=6).monthdayscalendar(y, m)  # Sunday-first
+        rows = ""
+        for week in weeks:
+            cells = ""
+            for day_num in week:
+                if day_num == 0:
+                    cells += '<div class="cal-day cal-day-empty"></div>'
+                    continue
+                d = datetime.date(y, m, day_num)
+                leg = day_leg(d)
+                if leg:
+                    style = f'background:{leg["color"]}33;border-color:{leg["color"]};'
+                    cells += (
+                        f'<div class="cal-day" data-leg="{esc(leg["name"])}" style="{style}" title="{esc(leg["name"])}">'
+                        f'<span class="cal-daynum">{day_num}</span></div>'
+                    )
+                else:
+                    cells += f'<div class="cal-day"><span class="cal-daynum">{day_num}</span></div>'
+            rows += f'<div class="cal-week">{cells}</div>'
+        dow = "".join(f'<div class="cal-dow">{d}</div>' for d in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"])
+        month_name = esc(datetime.date(y, m, 1).strftime("%B %Y"))
+        month_html += f"""
+        <div class="cal-month">
+          <div class="cal-month-title">{month_name}</div>
+          <div class="cal-dow-row">{dow}</div>
+          {rows}
+        </div>
+        """
+
+    legend = "".join(
+        f'<span><i style="background:{d["color"]}"></i>{esc(d["name"])} '
+        f'({d["start"].strftime("%b %-d")}–{d["end"].strftime("%b %-d")})</span>'
+        for d in dated
+    )
+    ics_events = [
+        {
+            "name": d["name"],
+            "start": d["start"].strftime("%Y%m%d"),
+            "end_exclusive": (d["end"] + datetime.timedelta(days=1)).strftime("%Y%m%d"),
+        }
+        for d in dated
+    ]
+
+    return f"""
+    <section class="block">
+      <h2>Trip calendar <button class="export-btn" id="export-ics" type="button">Export to calendar (.ics)</button></h2>
+      <div class="legend cal-legend">{legend}</div>
+      <div class="cal-months">{month_html}</div>
+    </section>
+    <script>
+      (function() {{
+        const ICS_EVENTS = {json.dumps(ics_events)};
+
+        function icsEscape(s) {{
+          return String(s).replace(/\\\\/g, '\\\\\\\\').replace(/;/g, '\\\\;').replace(/,/g, '\\\\,');
+        }}
+
+        document.getElementById('export-ics').addEventListener('click', () => {{
+          let ics = 'BEGIN:VCALENDAR\\r\\nVERSION:2.0\\r\\nPRODID:-//Pyramid Trip Planner//EN\\r\\n';
+          ICS_EVENTS.forEach((e, i) => {{
+            ics += 'BEGIN:VEVENT\\r\\n';
+            ics += `UID:leg-${{i}}-${{e.start}}@pyramid-trip-planner\\r\\n`;
+            ics += `DTSTART;VALUE=DATE:${{e.start}}\\r\\n`;
+            ics += `DTEND;VALUE=DATE:${{e.end_exclusive}}\\r\\n`;
+            ics += `SUMMARY:${{icsEscape(e.name)}}\\r\\n`;
+            ics += 'END:VEVENT\\r\\n';
+          }});
+          ics += 'END:VCALENDAR\\r\\n';
+          const blob = new Blob([ics], {{ type: 'text/calendar' }});
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'trip-legs.ics';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }});
+
+        // Shares the leg filter with the corkboard/map (see the filter script
+        // below) — dim rather than remove, since hiding calendar cells would
+        // leave holes in what's supposed to read as a continuous grid.
+        window.applyCalendarFilters = function(offCats, offLegs) {{
+          document.querySelectorAll('.cal-day[data-leg]').forEach(el => {{
+            el.style.opacity = offLegs.has(el.dataset.leg) ? '.25' : '';
+          }});
+        }};
+      }})();
+    </script>
+    """
+
+
+def google_maps_route_url(legs_with_coords):
+    """Deep-link into Google Maps directions (no API key — this is the public
+    Maps URL scheme, not a billed API call), with each locked leg as a stop in
+    order. There's no public API for writing pins into a user's own My Maps —
+    this opens a live turn-by-turn route instead, which is what's actually
+    achievable without asking the user to manually import anything."""
+    if len(legs_with_coords) < 2:
+        return None
+    pts = [(l["lat"], l["lng"]) for l in legs_with_coords]
+    origin = f"{pts[0][0]},{pts[0][1]}"
+    destination = f"{pts[-1][0]},{pts[-1][1]}"
+    url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode=driving"
+    waypoints = pts[1:-1]
+    if waypoints:
+        url += "&waypoints=" + "|".join(f"{lat},{lng}" for lat, lng in waypoints)
+    return url
+
+
 def render_map(wishlist, architecture):
     legs = (architecture or {}).get("legs") or []
-    legs = sorted(legs, key=lambda l: l.get("order", 0))
+    # Legs missing `order` sort after ordered ones, in their original (stable)
+    # order, rather than colliding at a default of 0 — keeps a partially-ordered
+    # list sane instead of silently reshuffling untagged legs to the front.
+    legs = sorted(legs, key=lambda l: (l.get("order") is None, l.get("order", 0)))
     legs_with_coords = [l for l in legs if "lat" in l and "lng" in l]
+    # Direction/numbering on the map only mean something once every plotted leg
+    # has an explicit order — a partially-ordered route can't be trusted to draw
+    # arrows or numbers in a way that isn't misleading.
+    order_locked = bool(legs_with_coords) and all(l.get("order") is not None for l in legs_with_coords)
     candidates = [
         w for w in (wishlist or []) if "lat" in w and "lng" in w and w.get("status") != "cut"
     ]
@@ -200,30 +410,43 @@ def render_map(wishlist, architecture):
             popup += f" — {esc(l['nights'])} nights"
         if l.get("note"):
             popup += f"<br>{esc(l['note'])}"
+        popup += photo_fragment(l.get("photo"))
         markers.append({
             "lat": l["lat"], "lng": l["lng"], "popup": popup, "kind": "leg",
-            "leg": l.get("name"), "filterKey": None,
+            "leg": l.get("name"), "filterKey": None, "order": l.get("order"),
         })
     for w in candidates:
         status = w.get("status", "pending")
         color, _, status_label = STATUS_META.get(status, STATUS_META["pending"])
         popup = f"{esc(w.get('item',''))} <em>({status_label}, not yet locked)</em>"
+        popup += photo_fragment(w.get("photo"))
         markers.append({
             "lat": w["lat"], "lng": w["lng"], "popup": popup, "kind": "candidate", "color": color,
             "leg": w.get("leg") or UNASSIGNED_LEG_KEY, "filterKey": f"wishlist-{status}",
         })
     route_leg_names = [l.get("name") for l in legs_with_coords]
+    order_note = (
+        " Numbered pins and arrows show the locked travel order."
+        if order_locked
+        else " Numbers/direction appear once every leg has a locked-in order."
+    )
+    gmaps_url = google_maps_route_url(legs_with_coords) if order_locked else None
+    gmaps_btn = (
+        f'<a class="export-btn" href="{esc(gmaps_url)}" target="_blank" rel="noopener">Open route in Google Maps ↗</a>'
+        if gmaps_url else ""
+    )
 
     return f"""
     <section class="block">
-      <h2>Route map</h2>
-      <div class="map-legend">Large purple pin = locked route leg, in order · small colored pin = wishlist candidate, colored by its status above. Same filters as the corkboard apply here too.</div>
+      <h2>Route map {gmaps_btn}</h2>
+      <div class="map-legend">Large purple pin = locked route leg · small colored pin = wishlist candidate, colored by its status above.{order_note} Same filters as the corkboard apply here too. Drag the bottom-right corner to resize.</div>
       <div id="map"></div>
     </section>
     <script>
       (function() {{
         const markerDefs = {json.dumps(markers)};
         const routeLegNames = {json.dumps(route_leg_names)};
+        const ORDER_LOCKED = {json.dumps(order_locked)};
         const map = L.map('map');
         // Esri's basemap (not raw OSM raster tiles) labels places in English worldwide —
         // plain OSM tiles render each region's local script, which is unreadable for an
@@ -233,16 +456,38 @@ def render_map(wishlist, architecture):
           attribution: 'Tiles &copy; Esri — Esri, HERE, Garmin, FAO, NOAA, USGS'
         }}).addTo(map);
 
+        // The map div has a native CSS resize handle (bottom-right corner) so the
+        // user can make it taller/shorter. Leaflet renders into a fixed-size canvas
+        // at init time, so without this it'd stay clipped or leave gray gaps after
+        // a manual resize instead of actually redrawing at the new size.
+        new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
         const layers = markerDefs.map(def => {{
           const color = def.kind === 'leg' ? '#6b4eff' : def.color;
           const marker = L.circleMarker([def.lat, def.lng], {{
             radius: def.kind === 'leg' ? 9 : 6, color, fillColor: color, fillOpacity: 0.85, weight: 2
           }});
           marker.bindPopup(def.popup);
+          if (def.kind === 'leg' && ORDER_LOCKED && def.order != null) {{
+            marker.bindTooltip(String(def.order), {{
+              permanent: true, direction: 'center', className: 'leg-num-tooltip'
+            }});
+          }}
           return {{ marker, def }};
         }});
 
+        // Initial bearing between two points (great-circle), in degrees clockwise
+        // from north — used to rotate the ▲ direction markers along the route.
+        function bearing(lat1, lng1, lat2, lng2) {{
+          const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+          const phi1 = toRad(lat1), phi2 = toRad(lat2), dLambda = toRad(lng2 - lng1);
+          const y = Math.sin(dLambda) * Math.cos(phi2);
+          const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+          return (toDeg(Math.atan2(y, x)) + 360) % 360;
+        }}
+
         let polyline = null;
+        let arrowMarkers = [];
 
         // Shared with the corkboard filters (see the filter script below) — same
         // category/leg toggles hide markers here and redraw the route line through
@@ -262,12 +507,32 @@ def render_map(wishlist, architecture):
             }}
           }});
           if (polyline) {{ map.removeLayer(polyline); polyline = null; }}
+          arrowMarkers.forEach(m => map.removeLayer(m));
+          arrowMarkers = [];
           const routePts = routeLegNames
             .map(name => layers.find(l => l.def.kind === 'leg' && l.def.leg === name))
             .filter(l => l && map.hasLayer(l.marker))
             .map(l => [l.def.lat, l.def.lng]);
           if (routePts.length > 1) {{
             polyline = L.polyline(routePts, {{color: '#6b4eff', weight: 3, dashArray: '6 8'}}).addTo(map);
+            // Direction is only meaningful once every leg has an explicit,
+            // locked-in order (ORDER_LOCKED) — otherwise this is just a route
+            // shape with no implied travel direction, so no arrows.
+            if (ORDER_LOCKED) {{
+              for (let i = 0; i < routePts.length - 1; i++) {{
+                const [lat1, lng1] = routePts[i], [lat2, lng2] = routePts[i + 1];
+                const brng = bearing(lat1, lng1, lat2, lng2);
+                const icon = L.divIcon({{
+                  className: 'route-arrow-icon',
+                  html: `<div style="transform:rotate(${{brng}}deg)">&#9650;</div>`,
+                  iconSize: [18, 18], iconAnchor: [9, 9],
+                }});
+                const am = L.marker([(lat1 + lat2) / 2, (lng1 + lng2) / 2], {{
+                  icon, interactive: false, keyboard: false,
+                }}).addTo(map);
+                arrowMarkers.push(am);
+              }}
+            }}
           }}
           if (bounds.length) {{
             map.fitBounds(bounds, {{padding: [30, 30]}});
@@ -332,6 +597,7 @@ def render_html(state):
         + render_rejected_notes(packer, state.get("rejected", []), leg_colors)
         + render_pending_notes(packer, state.get("pending_decisions", []), leg_colors)
     )
+    calendar_html = render_calendar(architecture, leg_colors)
     map_html = render_map(state.get("wishlist", []), architecture)
     leg_legend_html = ""
     if leg_colors:
@@ -383,11 +649,23 @@ def render_html(state):
   h2 {{ font-size: 15px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 24px 0 10px; }}
   .block {{ margin-bottom: 8px; }}
 
-  #map {{ height: 360px; border-radius: 12px; border: 1px solid var(--line); }}
+  #map {{
+    height: 560px; min-height: 220px; max-height: 85vh; border-radius: 12px; border: 1px solid var(--line);
+    resize: vertical; overflow: hidden;
+  }}
   .map-legend {{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }}
   .map-placeholder {{
     height: 120px; display: flex; align-items: center; justify-content: center;
     border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 13px; padding: 0 24px; text-align: center;
+  }}
+  .leaflet-tooltip.leg-num-tooltip {{
+    background: transparent; border: none; box-shadow: none; color: #fff;
+    font-weight: 700; font-size: 11px; padding: 0;
+  }}
+  .leaflet-tooltip.leg-num-tooltip::before {{ display: none; }}
+  .route-arrow-icon div {{
+    color: #6b4eff; font-size: 15px; line-height: 1;
+    filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff);
   }}
 
   .board-wrap {{
@@ -424,13 +702,45 @@ def render_html(state):
     display: inline-block; margin-top: 8px; font-size: 10px; font-weight: 700; color: #fff;
     padding: 2px 8px; border-radius: 999px; letter-spacing: .02em;
   }}
+  .note-photo {{
+    display: block; width: 100%; height: 90px; object-fit: cover;
+    border-radius: 4px; margin-bottom: 8px;
+  }}
+  .photo-credit {{ font-size: 10px; color: var(--muted); margin: -4px 0 8px; }}
+  .photo-credit a {{ color: inherit; }}
+  .leaflet-popup-content .note-photo {{ height: 110px; margin-top: 4px; }}
 
-  h2 {{ display: flex; align-items: center; gap: 12px; }}
+  h2 {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
   .show-all-btn {{
     text-transform: none; letter-spacing: normal; font-size: 12px; cursor: pointer;
     color: var(--muted); text-decoration: underline; display: none;
   }}
   .show-all-btn.visible {{ display: inline; }}
+  .export-btn {{
+    text-transform: none; letter-spacing: normal; font-size: 12px; font-weight: 600;
+    color: #fff; background: #6b4eff; padding: 5px 12px; border-radius: 999px;
+    border: none; cursor: pointer; text-decoration: none; display: inline-block;
+  }}
+  .export-btn:hover {{ filter: brightness(1.08); }}
+
+  .cal-legend span {{ cursor: default; }}
+  .cal-legend span:hover {{ background: none; border-color: transparent; }}
+  .cal-months {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+  .cal-month {{
+    background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    min-width: 240px;
+  }}
+  .cal-month-title {{ font-weight: 600; font-size: 13px; margin-bottom: 8px; text-align: center; }}
+  .cal-dow-row, .cal-week {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }}
+  .cal-dow {{ font-size: 10px; color: var(--muted); text-align: center; font-weight: 600; }}
+  .cal-week {{ margin-top: 3px; }}
+  .cal-day {{
+    aspect-ratio: 1; border-radius: 4px; border: 1px solid transparent;
+    display: flex; align-items: center; justify-content: center; font-size: 11px;
+    transition: opacity .15s;
+  }}
+  .cal-day-empty {{ visibility: hidden; }}
+  .cal-daynum {{ pointer-events: none; }}
   .legend-hint {{ font-size: 11px; color: var(--muted); margin-bottom: 6px; }}
   .legend {{ display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; font-size: 12px; color: var(--muted); }}
   .legend span {{
@@ -460,6 +770,7 @@ def render_html(state):
   {arch_html}
 </header>
 <main>
+  {calendar_html}
   {map_html}
   <h2>Corkboard <span class="show-all-btn" id="show-all">show all</span></h2>
   <div class="legend-hint">Click a category to hide/show those notes.</div>
@@ -557,6 +868,7 @@ def render_html(state):
     showAllBtn.classList.toggle('visible', anyOff);
     reflow();
     if (window.applyMapFilters) window.applyMapFilters(offCats, offLegs);
+    if (window.applyCalendarFilters) window.applyCalendarFilters(offCats, offLegs);
   }}
   [legend, legLegend].filter(Boolean).forEach(row => {{
     row.querySelectorAll('span[data-filter], span[data-leg-filter]').forEach(chip => {{
