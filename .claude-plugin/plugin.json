@@ -1,6 +1,6 @@
 {
   "name": "omri-agent-util-belt",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Personal agent toolkit: skills, hooks, commands, scripts. Cross-tool where possible (Claude Code primary).",
   "author": {
     "name": "Omri Amit",
