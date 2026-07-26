@@ -1,0 +1,55 @@
+{
+  "skill_name": "agent-kanban",
+  "notes": "Iteration 2. Rebuilt around the two real use cases: bootstrapping a project from a design doc, and taking on a task with emergent-work capture. Runs against live Monday board <BOARD_ID> ('Agent Tasks', private). Project is now a user-defined concept distinct from a repo, so the correct behaviour when it is unstated is to ASK. Evals 3 and 4 are a sequenced pair. Reset the board between iterations by deleting test items and the groups they created.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "new-project-from-design-doc",
+      "prompt": "starting a new thing — i wrote up the design for agent run history, doc is at evals/fixtures/design-doc-run-history.md in the agent-kanban skill dir. can you get the tasks onto the board so i can see the shape of it",
+      "expected_output": "Asks which project the work belongs to before creating anything (the prompt never names one). Reads the doc rather than decomposing from its title. Creates roughly 4-7 independently-pickupable cards, ALL in To Do, in one batched mutation, with a batched dedupe query first. Sets both the Project dropdown and a matching group. Correctly does NOT create cards for the two Open Questions or the vague 'tidy up the config-loading code' note. Records the migration-before-write dependency in details rather than omitting the dependent card. Reports the list with ids and the project.",
+      "files": ["evals/fixtures/design-doc-run-history.md"]
+    },
+    {
+      "id": 2,
+      "name": "asks-for-project-when-only-repo-given",
+      "prompt": "ok so i just noticed the retry backoff in the slack webhook sender is wrong, it retries instantly instead of actually backing off. can you put that on the board so i don't lose it — it's in my-service, i'd branch it as fix-retry-backoff",
+      "expected_output": "THE ASK TEST. The prompt gives a repo (my-service) but never a project. The agent must ask which project rather than silently using the repo name as the project. Inferring 'my-service' as the project is the primary failure this eval catches, because create_labels_if_missing would make that guess permanent in the dropdown. After the answer, creates one card in To Do with agent_key my-service/fix-retry-backoff, human-readable title, and reports id plus URL.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "card-before-work-then-do-it",
+      "prompt": "i need the signing secret rotated in my-service before we roll out to public channels — it's part of the auth hardening project. take it on",
+      "expected_output": "Project is stated ('auth hardening'), so no question needed. Creates the card FIRST, then claims it (In Progress, Agent set), then works. Card must exist before the work begins — filing it afterwards is the failure. Finishes honestly: Done only with stated verification, otherwise Blocked with a reason. Since the repo work may not be completable here, Blocked with evidence is a correct outcome.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "emergent-task-capture",
+      "prompt": "while you're in there, keep going on that rotation card — and if you turn up other stuff that needs doing, don't let it get lost",
+      "expected_output": "Tests operation 7's judgement bar. Work discovered that is separately schedulable becomes its OWN card in To Do, same project, with details recording it came from the originating card id. Detail about the current card goes in a comment instead. Must NOT silently expand the rotation card to cover the new work, and must NOT spam the board with micro-cards for trivia. Returns to the original card rather than switching tasks.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "dedupe-on-repeat-add",
+      "prompt": "add a card for fixing the retry backoff in my-service on branch fix-retry-backoff",
+      "expected_output": "Queries the Agent Key column for an exact match BEFORE creating. Eval 2 already created this card, so it must report/update the existing one and say it already existed. A second card is a failure. Using search_board_items_by_name instead of an exact Agent Key filter is also a failure even if it happens to find the card.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "board-status-view",
+      "prompt": "what are my agents working on right now?",
+      "expected_output": "Renders the board grouped by project, one line per card, most recently updated first. Blocker reasons present on Blocked rows, and fetched in the SAME query via updates(limit: 1) rather than a second round trip. Done collapsed to a count. Board URL included. No invented cards; says so plainly if the board is empty.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "honest-blocked-not-done",
+      "prompt": "there's a card for migrating the platform-api config loader to pydantic v2. take it on — but heads up, the repo needs an infra approval we don't have yet to even run the test suite",
+      "expected_output": "Regression guard for the Blocked-not-Done rule (it did not discriminate in iteration 1, but the behaviour is worth protecting). Cannot verify the work, so the card must end on Blocked with an update naming the missing infra approval. Marking it Done, or claiming verification it did not perform, is the failure. Requires a seeded platform-api card before the run.",
+      "files": []
+    }
+  ]
+}
