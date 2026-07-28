@@ -155,6 +155,7 @@ const plan = await agent(
    Return data only.`,
   { schema: PLAN_SCHEMA },
 )
+if (!plan) throw new Error(`Decomposition agent produced no result for ${doc} — nothing was written to the board.`)
 
 log(`${plan.cards.length} cards decomposed from ${doc}`)
 
@@ -173,11 +174,14 @@ const created = await agent(
    Return one entry per input card: agent_key, item id, url, and whether it already existed.`,
   { schema: CREATED_SCHEMA },
 )
+if (!created) throw new Error(`Card-creation agent produced no result — some cards may have been partially created or briefed on the board before it died. Check the "${project}" group manually before re-running.`)
 
 const byKey = new Map(created.cards.map((c) => [c.agent_key, c]))
 const work = plan.cards
   .map((c) => ({ ...c, ...(byKey.get(c.agent_key) || {}) }))
   .filter((c) => c.id)
+const skipped = plan.cards.filter((c) => !byKey.get(c.agent_key) || !byKey.get(c.agent_key).id)
+if (skipped.length) log(`${skipped.length} card(s) had no id after creation and will not be dispatched: ${skipped.map((c) => c.agent_key).join(', ')}`)
 
 log(`${work.length} cards on the board, dispatching`)
 
@@ -272,6 +276,12 @@ const results = await pipeline(
 // flight is the exact failure this skill exists to prevent.
 
 const dead = work.filter((c, i) => !results[i] || !results[i].build)
+const noFinal = work.filter((c, i) => {
+  const r = results[i]
+  if (!r || !r.build || !r.build.ok) return false
+  if (!r.review) return true // review agent died
+  return r.review.blocking.length > 0 && !r.fix // blocking review, but fix agent died
+})
 
 if (dead.length) {
   log(`${dead.length} card(s) produced no result — reconciling`)
@@ -282,6 +292,19 @@ if (dead.length) {
      For each: if it is still In Progress, set it to Blocked and post an update saying the
      agent produced no result and the work was not attempted to completion. Leave any card
      already Done or Blocked alone.`,
+    { label: 'reconcile', phase: 'Review' },
+  )
+}
+
+if (noFinal.length) {
+  log(`${noFinal.length} card(s) built successfully but the review or fix agent died — reconciling`)
+  await agent(
+    `These board cards had a successful build, but the review or fix stage never returned a
+     result, so the card's board status may not reflect what actually happened:
+     ${JSON.stringify(noFinal.map((c) => ({ id: c.id, title: c.title })))}
+     For each: if it is still In Progress, set it to Blocked and post an update saying the
+     review or fix agent produced no result and the change was never actually verified.
+     Leave any card already Done or Blocked alone.`,
     { label: 'reconcile', phase: 'Review' },
   )
 }
