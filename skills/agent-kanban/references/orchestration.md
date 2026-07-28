@@ -297,7 +297,8 @@ return {
       pr_url: (r && r.build && r.build.pr_url) || null,
       status: !r || !r.build ? 'no-result'
         : !r.build.ok ? 'blocked'
-        : final && final.blocking.length ? 'blocked'
+        : !final ? 'no-review'
+        : final.blocking.length ? 'blocked'
         : 'done',
     }
   }),
@@ -332,4 +333,6 @@ human looking at it.
 
 When the workflow returns, show the user one line per card — title, final status, PR link —
 and name every card in `dead` explicitly. A card that produced no result is the single most
-important thing in the run and it must not be summarised away.
+important thing in the run and it must not be summarised away. A card with status `no-review`
+must be named just as explicitly and never folded into a done count — its review agent died
+mid-run, so nobody verified the PR, even though the board itself was never told it was Done.
