@@ -225,7 +225,11 @@ markdown passes through literally — `## Context` shows up as the characters `#
 | a bullet | `<ul><li>…</li></ul>` |
 | code or a path | `<pre>src/webhook/retry.py</pre>` |
 
-Begin a brief with `<b>Task Brief</b><br>` so it can be told apart from progress updates.
+Begin a brief with `<b>Task Brief</b><br>` so it can be told apart from progress updates. Pass
+the tags **raw**, not HTML-escaped (`<b>`, not `&lt;b&gt;`) — an escaped tag is stored and
+displayed as the literal characters `&lt;b&gt;`, which looks like the same markdown-not-rendering
+failure but has a different cause. Verified live: escaped tags came back as literal entities,
+raw tags came back as real markup.
 
 **No size limit has been observed on update bodies** — briefs many times the size of the
 `Details` cap post fine. Do not pre-split on a guessed threshold. If monday ever *does* reject
