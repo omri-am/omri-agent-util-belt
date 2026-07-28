@@ -88,7 +88,8 @@ but the meaning does not.
 | title | What a human scanning the board needs to understand it | `Fix retry backoff in webhook sender` |
 | status | Kanban stage | `In Progress` |
 | agent | Which agent holds it now | `agent:builder-a` |
-| details | Enough context that a fresh agent could pick it up cold | goal, constraints, acceptance check |
+| details | Summary for a human scanning the card. **Hard-capped at 2000 chars.** | `Goal: … / Constraints: … / Done when: … / Depends on: …` |
+| brief | The full spec, posted as the card's **first update**. No practical size limit. | the slice of the design doc this card implements |
 | link | The primary artifact — PR, branch, doc | `https://github.com/.../pull/42` |
 | updates | Append-only progress log | `Ran retry_test.py: 3 failing` |
 
@@ -137,6 +138,33 @@ identifiers, branch names, and slugs in `agent_key` and `details`. A board full 
 like `fix-retry-backoff` forces the user to open every card to know what is happening, which
 is exactly the cost the board was supposed to remove.
 
+### details is a summary; the brief is an update
+
+`details` is a monday `long_text` column and monday caps those at 2000 characters. That is
+not a choice this skill makes and it cannot be raised. A real brief — the slice of a design
+doc the card implements, the files in scope, the interfaces, the acceptance criteria — does
+not fit, so putting it there means truncating it, and a truncated brief defeats the only
+reason `details` exists.
+
+So the two are split:
+
+- **`details`** carries four labelled lines and nothing else: `Goal:`, `Constraints:`,
+  `Done when:`, `Depends on:`. That shape always fits, and it is what the user reads when
+  they open the card.
+- **The brief** is posted as the card's **first update**, whose body begins with the marker
+  `<b>Task Brief</b>`. Updates are append-only, are never clobbered by a later write, and
+  are already fetched when an agent picks a card up — so the brief costs no extra round trip
+  at the moment it is needed.
+
+The marker matters. An agent reading a card's update history has to tell the spec apart from
+the progress log, and it does that by looking for `<b>Task Brief</b>` on the oldest update.
+Without the marker it has to guess, and it will read a progress note as the spec.
+
+A file column would also hold an unbounded brief, and a link to a spec in the repo would too.
+Neither was chosen: a file column needs a board migration and a base64 round trip to read,
+and a repo link stops the card being self-contained the moment someone without the repo opens
+it.
+
 ## The two flows this exists for
 
 Most real use is one of these. Both start the same way, by establishing the project.
@@ -181,7 +209,10 @@ check before creating:
    that is normal, not an error.
 5. **Not found** → create the card in To Do with the full contract above, setting both the
    Project column and the matching group.
-6. Report the card id and URL.
+6. **Post the Task Brief** as an update on the new card. A card is not finished until its
+   brief is on it — a card with a four-line summary and no brief is *less* useful than the
+   old truncated one, because it looks complete while carrying nothing to work from.
+7. Report the card id and URL.
 
 Skipping step 2 is the most common way this board degrades. Once duplicates appear the user
 cannot tell which card is real, and the board stops answering "what's happening".
@@ -232,8 +263,14 @@ Short and factual; this is a log, not a narrative. Skip anything that adds no ne
 
 When the user points at a card:
 
-1. Fetch the card **and its updates**. Prior updates are where an earlier attempt recorded
-   why it stopped, which is usually the highest-value context available.
+1. Fetch the card **and its updates**, then read them in two passes:
+   - The oldest update marked `<b>Task Brief</b>` is the spec. Read it before anything else;
+     `details` is only a summary of it.
+   - The rest are the progress log, newest last. This is where an earlier attempt recorded
+     why it stopped, which is usually the highest-value context available.
+
+   If there is no Task Brief update, the card predates this convention — work from `details`
+   and say in your first update that the card had no brief.
 2. Set In Progress, put yourself in Agent.
 3. Do the work.
 4. Complete per operation 3.
@@ -255,7 +292,12 @@ dedupe, everything starts in To Do.
 4. Create them in a single call. The reference file shows how to alias several creates into one
    mutation, which matters because a half-applied plan is worse than none — the user cannot tell
    which parts made it onto the board.
-5. Report the list back as titles with ids, and say which project they landed in.
+5. Post a Task Brief on each card, carrying **only the slice of the source document that card
+   implements** — plus the files in scope, the interfaces it must honour, its acceptance
+   criteria, and what is explicitly out of scope. Do not paste the whole document onto every
+   card: an agent that has to work out which third of a spec applies to it is back to having
+   no brief.
+6. Report the list back as titles with ids, and say which project they landed in.
 
 **Getting granularity right is the real work.** Aim for cards a single agent or person could
 pick up independently and know when they are finished. Two failure modes to steer between:
@@ -318,6 +360,18 @@ either stay silent or invent a card.
 Include the project too. A subagent cannot ask the user which project this is, so if it ever
 needs to create or re-file anything, the project has to have travelled with the brief. You
 already know it — you asked before creating the card.
+
+### Running a whole plan at once
+
+For a plan large enough that dispatching card by card is the tedious part, a single Workflow
+orchestrator can decompose the doc, run an agent per card in its own worktree, review each PR,
+and report every result back onto the board. `references/orchestration.md` has the preconditions
+and a template script.
+
+**Offer it; never assume it.** The Workflow tool requires explicit user opt-in on every run, so
+this skill cannot start one on its own. Write the cards (operation 6), tell the user the
+orchestrator exists, and let them choose. Writing the cards is the default behaviour; running
+them is the upgrade.
 
 ## Never invent a status
 

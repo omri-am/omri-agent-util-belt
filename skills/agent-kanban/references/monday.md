@@ -208,6 +208,34 @@ That is the mechanical reason the skill tells you to ask rather than infer: `cre
 will faithfully create `My Servcie` and it will sit there until someone removes it by hand.
 Prefer an existing label whenever one plausibly matches.
 
+### Details is capped at 2000 characters — the brief goes in an update
+
+`long_text` columns reject anything over 2000 characters. There is no setting for this. Keep
+`Details` to the four-line summary (`Goal:` / `Constraints:` / `Done when:` / `Depends on:`)
+and post the full brief as the card's first update instead. See SKILL.md for why.
+
+**Update bodies are HTML, not markdown.** `create_update` renders its `body` as HTML, so
+markdown passes through literally — `## Context` shows up as the characters `## Context`, and
+`- item` as `- item`. Convert before posting:
+
+| You want | Write |
+|---|---|
+| a heading | `<b>Context</b><br>` |
+| a line break | `<br>` |
+| a bullet | `<ul><li>…</li></ul>` |
+| code or a path | `<pre>src/webhook/retry.py</pre>` |
+
+Begin a brief with `<b>Task Brief</b><br>` so it can be told apart from progress updates. Pass
+the tags **raw**, not HTML-escaped (`<b>`, not `&lt;b&gt;`) — an escaped tag is stored and
+displayed as the literal characters `&lt;b&gt;`, which looks like the same markdown-not-rendering
+failure but has a different cause. Verified live: escaped tags came back as literal entities,
+raw tags came back as real markup.
+
+**No size limit has been observed on update bodies** — briefs many times the size of the
+`Details` cap post fine. Do not pre-split on a guessed threshold. If monday ever *does* reject
+one as too large, post the remainder as a second update beginning `<b>Task Brief (cont.)</b>`
+rather than cutting the brief down.
+
 ### Removing a stale project label
 
 Unlike status labels, dropdown labels *can* be edited — but the call has two non-obvious

@@ -1,6 +1,6 @@
 {
   "skill_name": "agent-kanban",
-  "notes": "Iteration 2. Rebuilt around the two real use cases: bootstrapping a project from a design doc, and taking on a task with emergent-work capture. Runs against live Monday board <BOARD_ID> ('Agent Tasks', private). Project is now a user-defined concept distinct from a repo, so the correct behaviour when it is unstated is to ASK. Evals 3 and 4 are a sequenced pair. Reset the board between iterations by deleting test items and the groups they created.",
+  "notes": "Iteration 3. Adds eval 8 for the details/brief split: details is a capped four-line summary and the full brief is posted as a Task Brief update. Iteration 2 rebuilt the skill around the two real use cases: bootstrapping a project from a design doc, and taking on a task with emergent-work capture. Runs against live Monday board <BOARD_ID> ('Agent Tasks', private). Project is a user-defined concept distinct from a repo, so the correct behaviour when it is unstated is to ASK. Evals 3 and 4 are a sequenced pair. Reset the board between iterations by deleting test items and the groups they created.",
   "evals": [
     {
       "id": 1,
@@ -50,6 +50,13 @@
       "prompt": "there's a card for migrating the platform-api config loader to pydantic v2. take it on — but heads up, the repo needs an infra approval we don't have yet to even run the test suite",
       "expected_output": "Regression guard for the Blocked-not-Done rule (it did not discriminate in iteration 1, but the behaviour is worth protecting). Cannot verify the work, so the card must end on Blocked with an update naming the missing infra approval. Marking it Done, or claiming verification it did not perform, is the failure. Requires a seeded platform-api card before the run.",
       "files": []
+    },
+    {
+      "id": 8,
+      "name": "brief-goes-to-update-not-details",
+      "prompt": "put the agent run history work on the board for the observability project — the design is at evals/fixtures/design-doc-run-history.md in the agent-kanban skill dir. i want each card to have enough on it that i can hand it to a fresh agent tomorrow without re-explaining anything",
+      "expected_output": "THE BRIEF TEST. Project is stated ('observability'), so no question needed. Every card's Details column must hold the four-line summary (Goal / Constraints / Done when / Depends on) and stay under 2000 characters. The full brief must arrive as a separate update on each card whose body starts with <b>Task Brief</b> and is HTML, not raw markdown — a body containing literal '## ' or leading '- ' bullets is a failure. Each brief carries only the slice of the design doc that card implements, not the whole document copied onto every card. Cramming the brief into Details, truncating it to fit the cap, or creating cards with no brief at all are the three failures this catches. All cards land in To Do.",
+      "files": ["evals/fixtures/design-doc-run-history.md"]
     }
   ]
 }
