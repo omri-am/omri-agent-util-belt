@@ -361,6 +361,18 @@ Include the project too. A subagent cannot ask the user which project this is, s
 needs to create or re-file anything, the project has to have travelled with the brief. You
 already know it — you asked before creating the card.
 
+### Running a whole plan at once
+
+For a plan large enough that dispatching card by card is the tedious part, a single Workflow
+orchestrator can decompose the doc, run an agent per card in its own worktree, review each PR,
+and report every result back onto the board. `references/orchestration.md` has the preconditions
+and a template script.
+
+**Offer it; never assume it.** The Workflow tool requires explicit user opt-in on every run, so
+this skill cannot start one on its own. Write the cards (operation 6), tell the user the
+orchestrator exists, and let them choose. Writing the cards is the default behaviour; running
+them is the upgrade.
+
 ## Never invent a status
 
 Status labels are board configuration, not free text, and writing one that does not exist
