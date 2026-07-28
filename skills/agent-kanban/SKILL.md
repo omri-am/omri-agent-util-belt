@@ -209,7 +209,10 @@ check before creating:
    that is normal, not an error.
 5. **Not found** → create the card in To Do with the full contract above, setting both the
    Project column and the matching group.
-6. Report the card id and URL.
+6. **Post the Task Brief** as an update on the new card. A card is not finished until its
+   brief is on it — a card with a four-line summary and no brief is *less* useful than the
+   old truncated one, because it looks complete while carrying nothing to work from.
+7. Report the card id and URL.
 
 Skipping step 2 is the most common way this board degrades. Once duplicates appear the user
 cannot tell which card is real, and the board stops answering "what's happening".
@@ -260,8 +263,14 @@ Short and factual; this is a log, not a narrative. Skip anything that adds no ne
 
 When the user points at a card:
 
-1. Fetch the card **and its updates**. Prior updates are where an earlier attempt recorded
-   why it stopped, which is usually the highest-value context available.
+1. Fetch the card **and its updates**, then read them in two passes:
+   - The oldest update marked `<b>Task Brief</b>` is the spec. Read it before anything else;
+     `details` is only a summary of it.
+   - The rest are the progress log, newest last. This is where an earlier attempt recorded
+     why it stopped, which is usually the highest-value context available.
+
+   If there is no Task Brief update, the card predates this convention — work from `details`
+   and say in your first update that the card had no brief.
 2. Set In Progress, put yourself in Agent.
 3. Do the work.
 4. Complete per operation 3.
@@ -283,7 +292,12 @@ dedupe, everything starts in To Do.
 4. Create them in a single call. The reference file shows how to alias several creates into one
    mutation, which matters because a half-applied plan is worse than none — the user cannot tell
    which parts made it onto the board.
-5. Report the list back as titles with ids, and say which project they landed in.
+5. Post a Task Brief on each card, carrying **only the slice of the source document that card
+   implements** — plus the files in scope, the interfaces it must honour, its acceptance
+   criteria, and what is explicitly out of scope. Do not paste the whole document onto every
+   card: an agent that has to work out which third of a spec applies to it is back to having
+   no brief.
+6. Report the list back as titles with ids, and say which project they landed in.
 
 **Getting granularity right is the real work.** Aim for cards a single agent or person could
 pick up independently and know when they are finished. Two failure modes to steer between:
