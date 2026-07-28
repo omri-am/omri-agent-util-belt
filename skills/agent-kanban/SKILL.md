@@ -88,7 +88,8 @@ but the meaning does not.
 | title | What a human scanning the board needs to understand it | `Fix retry backoff in webhook sender` |
 | status | Kanban stage | `In Progress` |
 | agent | Which agent holds it now | `agent:builder-a` |
-| details | Enough context that a fresh agent could pick it up cold | goal, constraints, acceptance check |
+| details | Summary for a human scanning the card. **Hard-capped at 2000 chars.** | `Goal: … / Constraints: … / Done when: … / Depends on: …` |
+| brief | The full spec, posted as the card's **first update**. No practical size limit. | the slice of the design doc this card implements |
 | link | The primary artifact — PR, branch, doc | `https://github.com/.../pull/42` |
 | updates | Append-only progress log | `Ran retry_test.py: 3 failing` |
 
@@ -136,6 +137,33 @@ Write the title so the user understands the task at a glance without opening the
 identifiers, branch names, and slugs in `agent_key` and `details`. A board full of titles
 like `fix-retry-backoff` forces the user to open every card to know what is happening, which
 is exactly the cost the board was supposed to remove.
+
+### details is a summary; the brief is an update
+
+`details` is a monday `long_text` column and monday caps those at 2000 characters. That is
+not a choice this skill makes and it cannot be raised. A real brief — the slice of a design
+doc the card implements, the files in scope, the interfaces, the acceptance criteria — does
+not fit, so putting it there means truncating it, and a truncated brief defeats the only
+reason `details` exists.
+
+So the two are split:
+
+- **`details`** carries four labelled lines and nothing else: `Goal:`, `Constraints:`,
+  `Done when:`, `Depends on:`. That shape always fits, and it is what the user reads when
+  they open the card.
+- **The brief** is posted as the card's **first update**, whose body begins with the marker
+  `<b>Task Brief</b>`. Updates are append-only, are never clobbered by a later write, and
+  are already fetched when an agent picks a card up — so the brief costs no extra round trip
+  at the moment it is needed.
+
+The marker matters. An agent reading a card's update history has to tell the spec apart from
+the progress log, and it does that by looking for `<b>Task Brief</b>` on the oldest update.
+Without the marker it has to guess, and it will read a progress note as the spec.
+
+A file column would also hold an unbounded brief, and a link to a spec in the repo would too.
+Neither was chosen: a file column needs a board migration and a base64 round trip to read,
+and a repo link stops the card being self-contained the moment someone without the repo opens
+it.
 
 ## The two flows this exists for
 
