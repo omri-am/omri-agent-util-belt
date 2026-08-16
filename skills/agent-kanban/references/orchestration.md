@@ -172,8 +172,8 @@ const created = await agent(
         update whose body starts with <b>Task Brief</b><br>. Convert the markdown to HTML
         first; update bodies do not render markdown.
    Return one entry per input card: agent_key, item id, url, and whether it already existed.`,
-  // Pure board CRUD, no reasoning — run it on a lower tier than the main agent.
-  { schema: CREATED_SCHEMA, model: 'haiku' },
+  // Pure board CRUD, no reasoning — pass model: '<lower tier than the main agent>' here.
+  { schema: CREATED_SCHEMA },
 )
 if (!created) throw new Error(`Card-creation agent produced no result — some cards may have been partially created or briefed on the board before it died. Check the "${project}" group manually before re-running.`)
 
@@ -293,8 +293,8 @@ if (dead.length) {
      For each: if it is still In Progress, set it to Blocked and post an update saying the
      agent produced no result and the work was not attempted to completion. Leave any card
      already Done or Blocked alone.`,
-    // Pure board CRUD, no reasoning — run it on a lower tier than the main agent.
-    { label: 'reconcile', phase: 'Review', model: 'haiku' },
+    // Pure board CRUD, no reasoning — pass model: '<lower tier than the main agent>' here.
+    { label: 'reconcile', phase: 'Review' },
   )
 }
 
@@ -307,8 +307,8 @@ if (noFinal.length) {
      For each: if it is still In Progress, set it to Blocked and post an update saying the
      review or fix agent produced no result and the change was never actually verified.
      Leave any card already Done or Blocked alone.`,
-    // Pure board CRUD, no reasoning — run it on a lower tier than the main agent.
-    { label: 'reconcile', phase: 'Review', model: 'haiku' },
+    // Pure board CRUD, no reasoning — pass model: '<lower tier than the main agent>' here.
+    { label: 'reconcile', phase: 'Review' },
   )
 }
 

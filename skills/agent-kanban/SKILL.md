@@ -366,8 +366,9 @@ already know it — you asked before creating the card.
 Some dispatched agents do no real work at all — their entire job is writing to the board:
 creating a batch of cards, posting a brief, flipping a status, reconciling cards after a dead
 agent. That is mechanical CRUD, not reasoning, so run it on a cheaper, lower-tier model than
-whatever the main agent is on (e.g. `model: 'haiku'` in `Agent` or `agent()`), rather than
-spending the main tier on it.
+whatever the main agent is on, via the `model` param on `Agent` or `agent()`, rather than
+spending the main tier on it. Pick whichever model is currently the cheapest/fastest tier
+available — do not hardcode a specific model name here, since that changes over time.
 
 Do not apply this to an agent that both does the work and updates the board as part of it — a
 builder, reviewer, or fixer's board write is a small tail end of a call that still needs full
